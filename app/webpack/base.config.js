@@ -19,7 +19,10 @@ const HtmlWebpackPlugin = require('html-webpack-plugin');
 const webpack = require('webpack');
 const WebpackNotifierPlugin = require('webpack-notifier');
 const ModuleFederationPlugin = require('webpack/lib/container/ModuleFederationPlugin');
+const dotenv = require('dotenv');
 const pjson = require('../package.json');
+
+dotenv.config();
 
 module.exports = {
   entry: {
@@ -96,6 +99,9 @@ module.exports = {
       Utils: 'common/utils',
       process: 'process/browser.js',
       Buffer: ['buffer', 'Buffer'],
+    }),
+    new webpack.DefinePlugin({
+      'process.env.STREAM_PULSE_API_URL': JSON.stringify(process.env.STREAM_PULSE_API_URL || ''),
     }),
     new ModuleFederationPlugin({
       name: 'main_app',
