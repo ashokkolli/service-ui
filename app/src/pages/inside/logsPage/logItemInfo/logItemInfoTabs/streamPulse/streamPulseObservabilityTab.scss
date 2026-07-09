@@ -1,0 +1,224 @@
+.stream-pulse-tab {
+  padding: 16px;
+  color: $COLOR--charcoal-grey;
+  background: $COLOR--white-two;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid $COLOR--gray-91;
+}
+
+.title {
+  font-family: $FONT-SEMIBOLD;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.subtitle {
+  margin-top: 4px;
+  color: $COLOR--gray-47;
+  font-size: 12px;
+}
+
+.status-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.notice,
+.empty {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid $COLOR--gray-80;
+  border-radius: 3px;
+  background: $COLOR--white;
+  color: $COLOR--gray-47;
+  font-size: 13px;
+}
+
+.top-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.kpi-card {
+  padding: 12px;
+  border: 1px solid $COLOR--gray-91;
+  border-left: 4px solid $COLOR--gray-60;
+  border-radius: 3px;
+  background: $COLOR--white;
+}
+
+.kpi-card.passed {
+  border-left-color: $COLOR--passed;
+}
+
+.kpi-card.warning {
+  border-left-color: $COLOR--warning;
+}
+
+.kpi-card.failed {
+  border-left-color: $COLOR--failed;
+}
+
+.kpi-name {
+  color: $COLOR--gray-47;
+  font-size: 12px;
+}
+
+.kpi-value {
+  margin-top: 4px;
+  font-family: $FONT-SEMIBOLD;
+  font-size: 20px;
+}
+
+.kpi-meta {
+  margin-top: 4px;
+  color: $COLOR--gray-47;
+  font-size: 12px;
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.accordion {
+  border: 1px solid $COLOR--gray-91;
+  border-radius: 3px;
+  background: $COLOR--white;
+}
+
+.accordion.warning {
+  border-left: 4px solid $COLOR--warning;
+}
+
+.accordion.failed {
+  border-left: 4px solid $COLOR--failed;
+}
+
+.accordion summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  cursor: pointer;
+  font-family: $FONT-SEMIBOLD;
+  font-size: 13px;
+}
+
+.accordion-body {
+  padding: 0 12px 12px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: $COLOR--gray-91;
+  color: $COLOR--gray-47;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.badge.passed {
+  background: rgba($COLOR--passed, 0.12);
+  color: $COLOR--passed;
+}
+
+.badge.warning {
+  background: rgba($COLOR--warning, 0.12);
+  color: $COLOR--warning;
+}
+
+.badge.failed {
+  background: rgba($COLOR--failed, 0.12);
+  color: $COLOR--failed;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th,
+.table td {
+  padding: 8px;
+  border-top: 1px solid $COLOR--gray-91;
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th {
+  color: $COLOR--gray-47;
+  font-family: $FONT-SEMIBOLD;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.summary-grid div {
+  padding: 10px;
+  border: 1px solid $COLOR--gray-91;
+  border-radius: 3px;
+}
+
+.summary-grid span {
+  display: block;
+  margin-bottom: 4px;
+  color: $COLOR--gray-47;
+  font-size: 12px;
+}
+
+.summary-grid b {
+  font-family: $FONT-SEMIBOLD;
+}
+
+.section-subtitle {
+  margin: 12px 0 6px;
+  font-family: $FONT-SEMIBOLD;
+  font-size: 13px;
+}
+
+.ordered-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.ordered-list li {
+  margin: 4px 0;
+}
+
+.pre {
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid $COLOR--gray-91;
+  border-radius: 3px;
+  background: $COLOR--white-two;
+  font-size: 12px;
+}
+
+.rca p {
+  margin: 8px 0;
+  line-height: 18px;
+}

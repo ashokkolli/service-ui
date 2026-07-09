@@ -48,6 +48,7 @@ import { InfoTabs } from '../infoTabs';
 import { LogItemDetails } from './logItemDetails';
 import { LogItemActivity } from './logItemActivity';
 import { Attachments } from './attachments';
+import { StreamPulseObservabilityTab } from './streamPulse';
 import { getActionMessage } from '../utils/getActionMessage';
 import styles from './logItemInfoTabs.scss';
 import { LogsGridWrapper } from '../../logsGridWrapper';
@@ -74,6 +75,10 @@ const messages = defineMessages({
   historyTab: {
     id: 'LogItemInfoTabs.historyTab',
     defaultMessage: 'History of actions',
+  },
+  observabilityTab: {
+    id: 'LogItemInfoTabs.observabilityTab',
+    defaultMessage: 'Observability & KPIs',
   },
 });
 
@@ -253,6 +258,15 @@ export class LogItemInfoTabs extends Component {
           logItem: activeRetry,
         },
         eventInfo: LOG_PAGE_EVENTS.ITEM_DETAILS_TAB,
+      },
+      {
+        id: 'stream-pulse-observability',
+        label: formatMessage(messages.observabilityTab),
+        icon: InfoIcon,
+        component: StreamPulseObservabilityTab,
+        componentProps: {
+          logItem: activeRetry || logItem,
+        },
       },
     ];
     if (this.isHistoryTabVisible()) {
