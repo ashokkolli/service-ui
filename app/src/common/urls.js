@@ -22,10 +22,12 @@ export const API_PATH = '/api';
 
 export const DEFAULT_API_URL_PREFIX = '../api/v1';
 export const DEFAULT_COMMON_API_URL_PREFIX = '../api';
+export const DEFAULT_AUTH_API_URL_PREFIX = '../uat';
 export const COMPOSITE_API_URL_PREFIX = '../composite/';
 
 const urlBase = `${DEFAULT_API_URL_PREFIX}/`;
 const urlCommonBase = `${DEFAULT_COMMON_API_URL_PREFIX}/`;
+const urlAuthBase = `${DEFAULT_AUTH_API_URL_PREFIX}/`; 
 const compositeBase = COMPOSITE_API_URL_PREFIX;
 const getQueryParams = (paramsObj, options = {}) =>
   stringify(paramsObj, { addQueryPrefix: true, ...options });
@@ -135,9 +137,9 @@ export const URLS = {
       view: exportType,
     })}`,
   launchAnalyze: (projectKey) => `${urlBase}${projectKey}/launch/analyze`,
-  login: () => `${urlCommonBase}sso/oauth/token`,
+  login: () => `${urlAuthBase}sso/oauth/token`,
   logout: () => `${urlBase}auth/logout`,
-  sessionToken: () => `${urlCommonBase}sso/me`,
+  sessionToken: () => `${urlAuthBase}sso/me`,
 
   apiKeys: (userId) => `${urlBase}users/${userId}/api-keys`,
   apiKeyById: (userId, apiKeyId) => `${urlBase}users/${userId}/api-keys/${apiKeyId}`,

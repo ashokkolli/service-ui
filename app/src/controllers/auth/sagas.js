@@ -76,6 +76,7 @@ import {
   LOGOUT,
   TOKEN_KEY,
   GRANT_TYPES,
+  DEFAULT_TOKEN,
   SET_TOKEN,
   LOGIN_SUCCESS,
   ANONYMOUS_REDIRECT_PATH_STORAGE_KEY,
@@ -230,6 +231,7 @@ function* submitLoginRequest(payload) {
       validateStatus: () => true,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `${DEFAULT_TOKEN.type} ${DEFAULT_TOKEN.value}`,
       },
       data: stringify({
         grant_type: GRANT_TYPES.PASSWORD,

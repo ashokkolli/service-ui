@@ -91,9 +91,72 @@ module.exports = () => {
       historyApiFallback: true,
       host: '0.0.0.0',
       port: 3000,
+
+      setupMiddlewares: (middlewares, devServer) => {
+        const defaultOrganization = {
+          id: 1,
+          name: 'Default',
+          slug: 'default',
+          type: 'INTERNAL',
+          usersQuantity: 1,
+          projectsQuantity: 1,
+        };
+
+        devServer.app.get('/api/organizations', (req, res) => {
+          res.json([defaultOrganization]);
+        });
+
+        devServer.app.post('/api/organizations/searches', (req, res) => {
+          res.json([defaultOrganization]);
+        });
+
+        devServer.app.get('/api/organizations/1/projects', async (req, res) => {
+          try {
+            const response = await fetch(`${process.env.PROXY_PATH}api/v1/project/list`, {
+              headers: { Authorization: req.headers.authorization || '' },
+            });
+            const payload = await response.json();
+            const content = (payload.content || []).map((project) => ({
+              id: project.id,
+              projectName: project.projectName,
+              projectSlug: project.projectName,
+              projectKey: project.projectName,
+              projectRole: 'PROJECT_MANAGER',
+              entryType: project.entryType,
+              organizationId: 1,
+            }));
+            res.json({ ...payload, content });
+          } catch (error) {
+            res.status(500).json({ message: error.message });
+          }
+        });
+
+        devServer.app.post('/api/organizations/1/projects/searches', async (req, res) => {
+          try {
+            const response = await fetch(`${process.env.PROXY_PATH}api/v1/project/list`, {
+              headers: { Authorization: req.headers.authorization || '' },
+            });
+            const payload = await response.json();
+            const content = (payload.content || []).map((project) => ({
+              id: project.id,
+              projectName: project.projectName,
+              projectSlug: project.projectName,
+              projectKey: project.projectName,
+              projectRole: 'PROJECT_MANAGER',
+              entryType: project.entryType,
+              organizationId: 1,
+            }));
+            res.json({ ...payload, content });
+          } catch (error) {
+            res.status(500).json({ message: error.message });
+          }
+        });
+
+        return middlewares;
+      },
       proxy: [
         {
-          context: ['/composite', '/api/'],
+          context: ['/composite', '/api/', '/uat/'],
           target: process.env.PROXY_PATH,
           changeOrigin: true,
           bypass(req) {

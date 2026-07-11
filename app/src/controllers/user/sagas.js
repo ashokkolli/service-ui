@@ -22,6 +22,7 @@ import {
   NOTIFICATION_TYPES,
   showErrorNotification,
 } from 'controllers/notification';
+import { ADMINISTRATOR } from 'common/constants/accountRoles';
 import { PROJECT_MANAGER } from 'common/constants/projectRoles';
 import {
   getUserProjectSettingsFromStorage,
@@ -112,9 +113,49 @@ function* assignToProject({ payload: project }) {
   }
 }
 
+const normalizeSessionUser = (sessionUser = {}) => {
+  const projects = sessionUser.projects || {};
+  const assignedProjects = Object.entries(projects).reduce(
+    (result, [projectSlug, project]) => ({
+      ...result,
+      [projectSlug]: {
+        projectId: project.id,
+        projectName: project.name || projectSlug,
+        projectSlug,
+        projectKey: projectSlug,
+        projectRole: project.role || PROJECT_MANAGER,
+        organizationId: 1,
+        organizationSlug: 'default',
+        organizationName: 'Default',
+      },
+    }),
+    {},
+  );
+
+  return {
+    id: sessionUser.userId,
+    userId: sessionUser.user || 'superadmin',
+    email: sessionUser.email || '',
+    fullName: sessionUser.user || 'superadmin',
+    userRole: (sessionUser.authorities || []).includes('ROLE_ADMINISTRATOR')
+      ? ADMINISTRATOR
+      : 'USER',
+    assignedProjects,
+    assignedOrganizations: {
+      default: {
+        organizationId: 1,
+        organizationSlug: 'default',
+        organizationName: 'Default',
+        organizationRole: 'MANAGER',
+      },
+    },
+  };
+};
+
 function* fetchUserInfo() {
   try {
-    const user = yield call(fetch, URLS.users());
+    const sessionUser = yield call(fetch, URLS.sessionToken());
+    const user = normalizeSessionUser(sessionUser);
     yield put(fetchUserSuccessAction(user));
     return user;
   } catch (err) {
