@@ -3,6 +3,9 @@ import {
   getStreamPulseObservabilityUrl,
   fetchStreamPulseObservability,
   isMockObservability,
+  createBug,
+  notifyGate,
+  rerunFailed,
 } from './streamPulseClient';
 import { mockObservabilityResponse } from './mockObservabilityResponse';
 
@@ -67,5 +70,33 @@ describe('streamPulseClient', () => {
     expect(isMockObservability(response)).toBe(true);
     expect(response.__mock_reason).toContain('fetch_error');
     expect(response.top_kpis).toEqual(mockObservabilityResponse.top_kpis);
+  });
+
+  test('createBug POSTs to the bug endpoint with overrides and returns the result', async () => {
+    process.env.FASTBREAK_API_URL = 'http://127.0.0.1:8000';
+    const result = { ok: false, assignee: 'OTT QA', issue_key: null, result: { reason: 'jira_not_configured' } };
+    global.fetch.mockResolvedValue({ ok: true, json: async () => result });
+
+    const r = await createBug('rp-1', { priority: 'Highest' });
+
+    expect(r).toBe(result);
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('http://127.0.0.1:8000/api/v1/reportportal/items/rp-1/bug');
+    expect(opts.method).toBe('POST');
+    expect(JSON.parse(opts.body)).toEqual({ priority: 'Highest' });
+  });
+
+  test('rerunFailed POSTs to the rerun endpoint', async () => {
+    process.env.FASTBREAK_API_URL = 'http://127.0.0.1:8000';
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ ok: false, reason: 'runner_not_configured' }) });
+
+    const r = await rerunFailed('rp-1');
+
+    expect(r.reason).toBe('runner_not_configured');
+    expect(global.fetch.mock.calls[0][0]).toBe('http://127.0.0.1:8000/api/v1/reportportal/items/rp-1/rerun');
+  });
+
+  test('actions throw when no API URL is configured', async () => {
+    await expect(notifyGate('rp-1')).rejects.toThrow('not configured');
   });
 });
