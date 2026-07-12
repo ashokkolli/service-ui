@@ -57,3 +57,29 @@ export const fetchStreamPulseObservability = async (rpItemId) => {
     return asMock(`fetch_error:${(error && error.message) || 'unknown'}`);
   }
 };
+
+// --- action loop: owner-routed Jira bug / Slack notify / re-run --------------
+// These POST to the FastBreak backend, which resolves the owner and performs the
+// action (honest no-op when Jira/Slack/runner isn't configured server-side).
+const postAction = async (rpItemId, action, body) => {
+  const baseUrl = getStreamPulseApiBaseUrl();
+  if (!baseUrl || !rpItemId) {
+    throw new Error('FastBreak API URL not configured');
+  }
+  const response = await fetch(
+    `${baseUrl}/api/v1/reportportal/items/${encodeURIComponent(rpItemId)}/${action}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`FastBreak API returned ${response.status}`);
+  }
+  return response.json();
+};
+
+export const createBug = (rpItemId, overrides) => postAction(rpItemId, 'bug', overrides || null);
+export const notifyGate = (rpItemId) => postAction(rpItemId, 'notify', null);
+export const rerunFailed = (rpItemId) => postAction(rpItemId, 'rerun', null);
