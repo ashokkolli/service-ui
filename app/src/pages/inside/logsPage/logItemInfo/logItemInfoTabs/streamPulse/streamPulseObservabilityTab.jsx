@@ -791,7 +791,9 @@ export class StreamPulseObservabilityTab extends Component {
 
   fetchData = () => {
     const { logItem } = this.props;
-    const rpItemId = logItem?.id;
+    // streampulse keys observability by the RP item UUID (the reporter tags it with
+    // item.uuid), so prefer uuid; fall back to the numeric id for older data.
+    const rpItemId = logItem?.uuid || logItem?.id;
 
     this.setState({ loading: true });
     fetchStreamPulseObservability(rpItemId).then((data) => {
@@ -813,7 +815,7 @@ export class StreamPulseObservabilityTab extends Component {
 
     const session = data.session || {};
     const sections = (data.accordion_sections || []).filter(hasSectionContent);
-    const rpItemId = this.props.logItem?.id;
+    const rpItemId = this.props.logItem?.uuid || this.props.logItem?.id;
     // Honesty: the owner-routed actions (file Jira bug / notify gate / re-run) hit
     // the live FastBreak backend. When we are showing SAMPLE data (no API URL or a
     // tagged mock) there is no live backend, so the actions are disabled with an
