@@ -2,12 +2,19 @@ import React, { Component, Fragment } from 'react';
 import PropTypes from 'prop-types';
 import classNames from 'classnames/bind';
 import {
+  createBug,
   fetchStreamPulseObservability,
   getStreamPulseApiBaseUrl,
+  isMockObservability,
+  notifyGate,
+  rerunFailed,
 } from './streamPulseClient';
 import {
+  crashFreePercent,
   hasSectionContent,
+  isHttpUri,
   percent,
+  severityGlyph,
   shouldAutoExpandSection,
   statusClass,
   text,
@@ -16,17 +23,267 @@ import styles from './streamPulseObservabilityTab.scss';
 
 const cx = classNames.bind(styles);
 
-const Badge = ({ value }) => <span className={cx('badge', statusClass(value))}>{text(value)}</span>;
+const Badge = ({ value = '' }) => {
+  const glyph = severityGlyph(value);
+
+  return (
+    <span className={cx('badge', statusClass(value))}>
+      {glyph && (
+        <span className={cx('badge-glyph')} aria-hidden="true">
+          {glyph}
+        </span>
+      )}
+      {text(value)}
+    </span>
+  );
+};
 
 Badge.propTypes = {
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
 };
 
-Badge.defaultProps = {
-  value: '',
+// Copy to clipboard for non-openable URIs (s3://, gs://, …). Guarded so it is a
+// no-op in environments without the async clipboard API rather than throwing.
+const copyToClipboard = (value) => {
+  if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text(value));
+  }
 };
 
-const TopKpiStrip = ({ kpis }) => {
+// Normalize the honest backend action response into the fields the UI renders.
+// NEVER invents an issue key or a success — a missing key stays null so the UI
+// falls through to the backend's honest reason.
+const readActionResult = (res) => {
+  const source = res && typeof res === 'object' ? res : {};
+  const nested = source.result && typeof source.result === 'object' ? source.result : {};
+  const issueKey =
+    source.issue_key || source.issueKey || nested.issue_key || nested.issueKey || null;
+  const url =
+    source.url || source.issue_url || source.browse_url || nested.url || nested.issue_url || null;
+  const reason = source.reason || nested.reason || source.error || nested.error || null;
+  const message = source.message || nested.message || null;
+
+  return { ok: source.ok === true, issueKey, url, reason, message };
+};
+
+const ACTION_LABELS = {
+  bug: 'Create Jira bug',
+  notify: 'Notify gate',
+  rerun: 'Re-run failed',
+};
+
+const ArtifactUri = ({ artifact = {} }) => {
+  const uri = text(artifact.uri || artifact.object_key);
+
+  if (!uri) {
+    return null;
+  }
+
+  const isVideo = artifact.type === 'video' || /\.mp4(\?|#|$)/i.test(uri);
+
+  // Honesty: only http(s) is a real, openable link. Non-http schemes (s3://…)
+  // are shown as selectable text with a copy affordance — never a dead link.
+  if (isHttpUri(uri)) {
+    return (
+      <a className={cx('artifact-link')} href={uri} target="_blank" rel="noopener noreferrer">
+        {isVideo && (
+          <span className={cx('replay-affordance')} aria-hidden="true">
+            ▶{' '}
+          </span>
+        )}
+        {isVideo ? 'replay' : uri}
+      </a>
+    );
+  }
+
+  return (
+    <span className={cx('artifact-uri')}>
+      <code className={cx('artifact-code')}>{uri}</code>
+      <button
+        type="button"
+        className={cx('copy-btn')}
+        onClick={() => copyToClipboard(uri)}
+        aria-label={`Copy URI ${uri}`}
+      >
+        Copy
+      </button>
+    </span>
+  );
+};
+
+ArtifactUri.propTypes = {
+  artifact: PropTypes.object,
+};
+
+class RcaActions extends Component {
+  static propTypes = {
+    rpItemId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    jiraReady: PropTypes.object,
+    functionalStatus: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    disabled: PropTypes.bool,
+    disabledReason: PropTypes.string,
+  };
+
+  static defaultProps = {
+    rpItemId: null,
+    jiraReady: null,
+    functionalStatus: '',
+    disabled: false,
+    disabledReason: '',
+  };
+
+  state = {
+    pending: null,
+    result: null,
+    error: null,
+  };
+
+  runAction = (action, invoke) => {
+    this.setState({ pending: action, result: null, error: null });
+    Promise.resolve()
+      .then(invoke)
+      .then((res) => this.setState({ pending: null, result: { action, res } }))
+      .catch((err) =>
+        this.setState({
+          pending: null,
+          error: { action, message: (err && err.message) || String(err) },
+        }),
+      );
+  };
+
+  handleCreateBug = () =>
+    this.runAction('bug', () => createBug(this.props.rpItemId, this.props.jiraReady || undefined));
+
+  handleNotify = () => this.runAction('notify', () => notifyGate(this.props.rpItemId));
+
+  handleRerun = () => this.runAction('rerun', () => rerunFailed(this.props.rpItemId));
+
+  renderResult() {
+    const { result, error } = this.state;
+
+    if (error) {
+      return (
+        <div className={cx('action-result', 'action-result--error')} role="alert">
+          <span className={cx('action-glyph')} aria-hidden="true">
+            ✗
+          </span>
+          {ACTION_LABELS[error.action]} failed: {text(error.message)}
+        </div>
+      );
+    }
+
+    if (!result) {
+      return null;
+    }
+
+    const parsed = readActionResult(result.res);
+
+    if (result.action === 'bug') {
+      // HONESTY: a real success requires ok===true AND a returned issue key. Only
+      // then do we surface the key; we NEVER fabricate one.
+      if (parsed.ok && parsed.issueKey) {
+        return (
+          <div className={cx('action-result', 'action-result--ok')} role="status">
+            <span className={cx('action-glyph')} aria-hidden="true">
+              ✓
+            </span>
+            Created Jira bug{' '}
+            {parsed.url ? (
+              <a
+                className={cx('issue-link')}
+                href={parsed.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {text(parsed.issueKey)}
+              </a>
+            ) : (
+              <code className={cx('issue-key')}>{text(parsed.issueKey)}</code>
+            )}
+          </div>
+        );
+      }
+
+      // Not configured / failed: show the backend's honest reason, no fake key.
+      return (
+        <div className={cx('action-result', 'action-result--muted')} role="status">
+          <span className={cx('action-glyph')} aria-hidden="true">
+            ⚠
+          </span>
+          Jira bug not created: {text(parsed.reason || parsed.message || 'no reason returned')}
+        </div>
+      );
+    }
+
+    const label = ACTION_LABELS[result.action];
+
+    if (parsed.ok) {
+      return (
+        <div className={cx('action-result', 'action-result--ok')} role="status">
+          <span className={cx('action-glyph')} aria-hidden="true">
+            ✓
+          </span>
+          {label} — {text(parsed.message || parsed.reason || 'done')}
+        </div>
+      );
+    }
+
+    return (
+      <div className={cx('action-result', 'action-result--muted')} role="status">
+        <span className={cx('action-glyph')} aria-hidden="true">
+          ⚠
+        </span>
+        {label} not completed: {text(parsed.reason || parsed.message || 'no reason returned')}
+      </div>
+    );
+  }
+
+  render() {
+    const { functionalStatus, disabled, disabledReason } = this.props;
+    const { pending } = this.state;
+    // Re-run is offered ONLY when the functional test itself failed.
+    const showRerun = statusClass(functionalStatus) === 'failed';
+    const busy = Boolean(pending);
+
+    return (
+      <div className={cx('rca-actions')}>
+        <h4 className={cx('section-subtitle')}>Actions</h4>
+        <div className={cx('action-buttons')}>
+          <button
+            type="button"
+            className={cx('action-btn', 'action-btn--primary')}
+            onClick={this.handleCreateBug}
+            disabled={disabled || busy}
+          >
+            {pending === 'bug' ? 'Creating Jira bug…' : 'Create Jira bug'}
+          </button>
+          <button
+            type="button"
+            className={cx('action-btn')}
+            onClick={this.handleNotify}
+            disabled={disabled || busy}
+          >
+            {pending === 'notify' ? 'Notifying gate…' : 'Notify gate'}
+          </button>
+          {showRerun && (
+            <button
+              type="button"
+              className={cx('action-btn')}
+              onClick={this.handleRerun}
+              disabled={disabled || busy}
+            >
+              {pending === 'rerun' ? 'Re-running…' : 'Re-run failed'}
+            </button>
+          )}
+        </div>
+        {disabled && disabledReason && <p className={cx('action-hint')}>{text(disabledReason)}</p>}
+        {this.renderResult()}
+      </div>
+    );
+  }
+}
+
+const TopKpiStrip = ({ kpis = [] }) => {
   if (!kpis.length) {
     return null;
   }
@@ -51,10 +308,6 @@ TopKpiStrip.propTypes = {
   kpis: PropTypes.array,
 };
 
-TopKpiStrip.defaultProps = {
-  kpis: [],
-};
-
 const PerformanceSessionSummary = ({ section }) => (
   <table className={cx('table')}>
     <tbody>
@@ -75,7 +328,7 @@ PerformanceSessionSummary.propTypes = {
   section: PropTypes.object.isRequired,
 };
 
-const ListBlock = ({ title, items, renderItem }) => {
+const ListBlock = ({ title, items = [], renderItem = null }) => {
   if (!items.length) {
     return null;
   }
@@ -98,12 +351,13 @@ ListBlock.propTypes = {
   renderItem: PropTypes.func,
 };
 
-ListBlock.defaultProps = {
-  items: [],
-  renderItem: null,
-};
-
-const AiRcaInsights = ({ section }) => {
+const AiRcaInsights = ({
+  section,
+  rpItemId = null,
+  functionalStatus = '',
+  actionsDisabled = false,
+  actionsDisabledReason = '',
+}) => {
   const data = section.data || {};
   const slowEvidence = data.slow_url_api_cdn_evidence || data.slow_requests || data.evidence || [];
   const timeline = data.timeline_correlation || data.timeline || data.correlations || [];
@@ -175,16 +429,40 @@ const AiRcaInsights = ({ section }) => {
       <ListBlock title="Recommended action" items={Array.isArray(actions) ? actions : [actions]} />
       {data.jira_ready && (
         <Fragment>
-          <h4 className={cx('section-subtitle')}>Jira-ready summary</h4>
-          <pre className={cx('pre')}>{JSON.stringify(data.jira_ready, null, 2)}</pre>
+          <h4 className={cx('section-subtitle')}>Jira-ready draft</h4>
+          <dl className={cx('jira-draft')}>
+            {data.jira_ready.summary && (
+              <Fragment>
+                <dt>Summary</dt>
+                <dd>{text(data.jira_ready.summary)}</dd>
+              </Fragment>
+            )}
+            {data.jira_ready.description && (
+              <Fragment>
+                <dt>Description</dt>
+                <dd>{text(data.jira_ready.description)}</dd>
+              </Fragment>
+            )}
+          </dl>
         </Fragment>
       )}
+      <RcaActions
+        rpItemId={rpItemId}
+        jiraReady={data.jira_ready}
+        functionalStatus={functionalStatus}
+        disabled={actionsDisabled}
+        disabledReason={actionsDisabledReason}
+      />
     </div>
   );
 };
 
 AiRcaInsights.propTypes = {
   section: PropTypes.object.isRequired,
+  rpItemId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  functionalStatus: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  actionsDisabled: PropTypes.bool,
+  actionsDisabledReason: PropTypes.string,
 };
 
 const NetworkIntelligence = ({ section }) => {
@@ -234,7 +512,7 @@ NetworkIntelligence.propTypes = {
   section: PropTypes.object.isRequired,
 };
 
-const KpiTable = ({ rows }) => (
+const KpiTable = ({ rows = [] }) => (
   <table className={cx('table')}>
     <thead>
       <tr>
@@ -265,10 +543,6 @@ KpiTable.propTypes = {
   rows: PropTypes.array,
 };
 
-KpiTable.defaultProps = {
-  rows: [],
-};
-
 const ArtifactsEvidence = ({ section }) => {
   const rows = section.data?.artifacts || section.data?.rows || [];
 
@@ -289,7 +563,7 @@ const ArtifactsEvidence = ({ section }) => {
             <td>{text(artifact.name || artifact.filename)}</td>
             <td>{text(artifact.storage || artifact.storage_backend)}</td>
             <td>
-              <code>{text(artifact.uri || artifact.object_key)}</code>
+              <ArtifactUri artifact={artifact} />
             </td>
           </tr>
         ))}
@@ -339,12 +613,89 @@ HistoryRegression.propTypes = {
   section: PropTypes.object.isRequired,
 };
 
-const SectionBody = ({ section }) => {
+const APP_HEALTH_FAULTS = [
+  { key: 'crashes', label: 'Crashes' },
+  { key: 'native_crashes', label: 'Native crashes' },
+  { key: 'anrs', label: 'ANRs' },
+  { key: 'oom_kills', label: 'OOM kills' },
+];
+
+const AppHealth = ({ section }) => {
+  const data = section.data || {};
+
+  // HONESTY: when nothing was captured we must NEVER render green zeros that
+  // imply a clean bill of health. Show only the honest "Not captured" note.
+  if (!data.captured) {
+    return (
+      <div className={cx('app-health', 'not-captured')}>
+        <div className={cx('app-health-headline')}>
+          <span className={cx('app-health-metric-label')}>Crash-free rate</span>
+          <b className={cx('app-health-metric-value', 'muted')}>Not captured</b>
+        </div>
+        <p className={cx('app-health-note')}>
+          {text(data.note) ||
+            'Not captured — no on-device ApplicationExitInfo snapshot for this run.'}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cx('app-health')}>
+      <div className={cx('app-health-headline')}>
+        <span className={cx('app-health-metric-label')}>Crash-free rate</span>
+        <b className={cx('app-health-metric-value')}>{crashFreePercent(data.crash_free_rate)}</b>
+      </div>
+      <table className={cx('table')}>
+        <thead>
+          <tr>
+            {APP_HEALTH_FAULTS.map((fault) => (
+              <th key={fault.key}>{fault.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            {APP_HEALTH_FAULTS.map((fault) => (
+              <td
+                key={fault.key}
+                className={cx('fault-cell', { 'fault-cell--nonzero': Number(data[fault.key]) > 0 })}
+              >
+                {text(data[fault.key])}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+      {data.note && <p className={cx('app-health-note')}>{text(data.note)}</p>}
+    </div>
+  );
+};
+
+AppHealth.propTypes = {
+  section: PropTypes.object.isRequired,
+};
+
+const SectionBody = ({
+  section,
+  rpItemId = null,
+  functionalStatus = '',
+  actionsDisabled = false,
+  actionsDisabledReason = '',
+}) => {
   if (section.type === 'summary') {
     return <PerformanceSessionSummary section={section} />;
   }
   if (section.type === 'rca') {
-    return <AiRcaInsights section={section} />;
+    return (
+      <AiRcaInsights
+        section={section}
+        rpItemId={rpItemId}
+        functionalStatus={functionalStatus}
+        actionsDisabled={actionsDisabled}
+        actionsDisabledReason={actionsDisabledReason}
+      />
+    );
   }
   if (section.type === 'network') {
     return <NetworkIntelligence section={section} />;
@@ -358,15 +709,28 @@ const SectionBody = ({ section }) => {
   if (section.type === 'history') {
     return <HistoryRegression section={section} />;
   }
+  if (section.type === 'app_health') {
+    return <AppHealth section={section} />;
+  }
 
   return <pre className={cx('pre')}>{JSON.stringify(section.data || {}, null, 2)}</pre>;
 };
 
 SectionBody.propTypes = {
   section: PropTypes.object.isRequired,
+  rpItemId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  functionalStatus: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  actionsDisabled: PropTypes.bool,
+  actionsDisabledReason: PropTypes.string,
 };
 
-const KpiAccordionSection = ({ section }) => {
+export const KpiAccordionSection = ({
+  section,
+  rpItemId = null,
+  functionalStatus = '',
+  actionsDisabled = false,
+  actionsDisabledReason = '',
+}) => {
   if (!hasSectionContent(section)) {
     return null;
   }
@@ -381,7 +745,13 @@ const KpiAccordionSection = ({ section }) => {
         <Badge value={section.status} />
       </summary>
       <div className={cx('accordion-body')}>
-        <SectionBody section={section} />
+        <SectionBody
+          section={section}
+          rpItemId={rpItemId}
+          functionalStatus={functionalStatus}
+          actionsDisabled={actionsDisabled}
+          actionsDisabledReason={actionsDisabledReason}
+        />
       </div>
     </details>
   );
@@ -389,6 +759,10 @@ const KpiAccordionSection = ({ section }) => {
 
 KpiAccordionSection.propTypes = {
   section: PropTypes.object.isRequired,
+  rpItemId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  functionalStatus: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  actionsDisabled: PropTypes.bool,
+  actionsDisabledReason: PropTypes.string,
 };
 
 export class StreamPulseObservabilityTab extends Component {
@@ -439,6 +813,16 @@ export class StreamPulseObservabilityTab extends Component {
 
     const session = data.session || {};
     const sections = (data.accordion_sections || []).filter(hasSectionContent);
+    const rpItemId = this.props.logItem?.id;
+    // Honesty: the owner-routed actions (file Jira bug / notify gate / re-run) hit
+    // the live FastBreak backend. When we are showing SAMPLE data (no API URL or a
+    // tagged mock) there is no live backend, so the actions are disabled with an
+    // honest note rather than pretending to act.
+    const isSample = !apiBaseUrl || isMockObservability(data);
+    const actionsDisabledReason = isSample
+      ? 'Actions are disabled for SAMPLE data — connect the FastBreak API to file a Jira bug, ' +
+        'notify the release gate, or re-run.'
+      : '';
 
     return (
       <div className={cx('stream-pulse-tab')}>
@@ -458,15 +842,25 @@ export class StreamPulseObservabilityTab extends Component {
             <Badge value={session.rca_category} />
           </div>
         </div>
-        {!apiBaseUrl && (
+        {(!apiBaseUrl || isMockObservability(data)) && (
           <div className={cx('notice')}>
-            STREAM_PULSE_API_URL is not configured. Showing local mock observability data.
+            {isMockObservability(data)
+              ? 'Showing SAMPLE observability data — not a live measurement (the API was ' +
+                'configured but could not be reached).'
+              : 'STREAM_PULSE_API_URL is not configured. Showing local mock observability data.'}
           </div>
         )}
         <TopKpiStrip kpis={data.top_kpis || []} />
         <div className={cx('sections')}>
           {sections.map((section) => (
-            <KpiAccordionSection key={section.key || section.title} section={section} />
+            <KpiAccordionSection
+              key={section.key || section.title}
+              section={section}
+              rpItemId={rpItemId}
+              functionalStatus={session.functional_status}
+              actionsDisabled={isSample}
+              actionsDisabledReason={actionsDisabledReason}
+            />
           ))}
         </div>
       </div>

@@ -123,6 +123,15 @@
   padding: 0 12px 12px;
 }
 
+// WCAG 2.1 AA badge text tokens. The bright status hues ($COLOR--passed/warning/
+// failed) fail AA on the 12% tints below (~2.4:1 / ~1.6:1 / ~2.8:1) for 11px
+// text. These darkened variants clear >=4.5:1 on both the #fff and #f5f5f5
+// composited tint backgrounds. Verified by contrast calc; keep in sync if the
+// tint alpha changes.
+$badge-text-passed: #157347; // ~4.9:1 on the passed tint
+$badge-text-warning: #805500; // ~5.6:1 on the warning tint
+$badge-text-failed: #a61b1b; // ~6.1:1 on the failed tint
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -135,19 +144,31 @@
   text-transform: uppercase;
 }
 
+// Severity glyph so meaning is never carried by color alone (WCAG 1.4.1).
+.badge-glyph {
+  margin-right: 4px;
+  font-size: 10px;
+  line-height: 1;
+}
+
 .badge.passed {
   background: rgba($COLOR--passed, 0.12);
-  color: $COLOR--passed;
+  color: $badge-text-passed;
 }
 
 .badge.warning {
   background: rgba($COLOR--warning, 0.12);
-  color: $COLOR--warning;
+  color: $badge-text-warning;
 }
 
 .badge.failed {
   background: rgba($COLOR--failed, 0.12);
-  color: $COLOR--failed;
+  color: $badge-text-failed;
+}
+
+.badge.info {
+  background: $COLOR--gray-91;
+  color: $COLOR--gray-47;
 }
 
 .table {
@@ -221,4 +242,201 @@
 .rca p {
   margin: 8px 0;
   line-height: 18px;
+}
+
+.app-health-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.app-health-metric-label {
+  color: $COLOR--gray-47;
+  font-size: 12px;
+}
+
+.app-health-metric-value {
+  font-family: $FONT-SEMIBOLD;
+  font-size: 20px;
+}
+
+.app-health-metric-value.muted {
+  color: $COLOR--gray-47;
+  font-size: 15px;
+}
+
+.app-health .fault-cell {
+  font-family: $FONT-SEMIBOLD;
+}
+
+.app-health .fault-cell--nonzero {
+  color: $COLOR--failed;
+}
+
+.app-health-note {
+  margin: 8px 0 0;
+  color: $COLOR--gray-47;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+// --- Jira-ready draft (readable, replaces the raw JSON blob) ------------------
+.jira-draft {
+  margin: 0 0 8px;
+  padding: 10px;
+  border: 1px solid $COLOR--gray-91;
+  border-radius: 3px;
+  background: $COLOR--white-two;
+  font-size: 12px;
+}
+
+.jira-draft dt {
+  color: $COLOR--gray-47;
+  font-family: $FONT-SEMIBOLD;
+}
+
+.jira-draft dd {
+  margin: 2px 0 8px;
+  line-height: 18px;
+}
+
+.jira-draft dd:last-child {
+  margin-bottom: 0;
+}
+
+// --- Owner-routed actions (Create Jira bug / Notify gate / Re-run) ------------
+.rca-actions {
+  margin-top: 12px;
+}
+
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid $COLOR--gray-80;
+  border-radius: 3px;
+  background: $COLOR--white-two;
+  color: $COLOR--charcoal-grey;
+  font-family: $FONT-SEMIBOLD;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: $COLOR--white;
+}
+
+// Visible keyboard focus ring (WCAG 2.4.7).
+.action-btn:focus,
+.action-btn:focus-visible {
+  outline: 2px solid $COLOR--topaz;
+  outline-offset: 2px;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-btn--primary {
+  border-color: $COLOR--topaz;
+  color: $COLOR--topaz;
+}
+
+.action-hint {
+  margin: 8px 0 0;
+  color: $COLOR--gray-47;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.action-result {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.action-glyph {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.action-result--ok {
+  color: $badge-text-passed;
+}
+
+.action-result--muted {
+  color: $badge-text-warning;
+}
+
+.action-result--error {
+  color: $badge-text-failed;
+}
+
+.issue-link,
+.artifact-link {
+  color: $COLOR--topaz;
+  text-decoration: underline;
+}
+
+.issue-link:focus,
+.issue-link:focus-visible,
+.artifact-link:focus,
+.artifact-link:focus-visible {
+  outline: 2px solid $COLOR--topaz;
+  outline-offset: 2px;
+}
+
+.issue-key {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: $COLOR--gray-91;
+  font-size: 12px;
+}
+
+// --- Artifact evidence (clickable links + copyable non-http URIs) ------------
+.artifact-uri {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.artifact-code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: $COLOR--gray-91;
+  font-size: 12px;
+  user-select: all;
+}
+
+.copy-btn {
+  padding: 2px 8px;
+  border: 1px solid $COLOR--gray-80;
+  border-radius: 3px;
+  background: $COLOR--white-two;
+  color: $COLOR--charcoal-grey;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.copy-btn:hover {
+  background: $COLOR--white;
+}
+
+.copy-btn:focus,
+.copy-btn:focus-visible {
+  outline: 2px solid $COLOR--topaz;
+  outline-offset: 2px;
 }
