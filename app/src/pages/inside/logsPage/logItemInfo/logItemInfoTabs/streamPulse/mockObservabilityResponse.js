@@ -60,6 +60,22 @@ export const mockObservabilityResponse = {
       },
     },
     {
+      key: 'app_health',
+      title: 'App-Health (Stability)',
+      type: 'app_health',
+      status: 'passed',
+      default_expanded: false,
+      data: {
+        captured: true,
+        crash_free_rate: 1,
+        crashes: 0,
+        native_crashes: 0,
+        anrs: 0,
+        oom_kills: 0,
+        note: 'On-device ApplicationExitInfo snapshot captured — no crashes, native crashes, ANRs, or OOM kills for this run.',
+      },
+    },
+    {
       key: 'ai-rca',
       title: 'AI RCA & Insights',
       type: 'rca',
