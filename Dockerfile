@@ -12,7 +12,9 @@ FROM node:20-alpine AS build-frontend
 RUN mkdir -p /usr/src/app
 WORKDIR /usr/src/app
 COPY ./app/ /usr/src/app/
-RUN export NODE_OPTIONS="--max-old-space-size=4096"
+# NODE_OPTIONS must be an ENV (a `RUN export` doesn't persist to the next RUN) so
+# webpack actually gets the larger heap — the prior build OOM/SIGKILLed.
+ENV NODE_OPTIONS="--max-old-space-size=6144"
 RUN npm ci --legacy-peer-deps && npm run build
 
 FROM nginxinc/nginx-unprivileged:alpine
