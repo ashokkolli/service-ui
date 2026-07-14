@@ -19,9 +19,15 @@ import {
   statusClass,
   text,
 } from './streamPulseUtils';
+import { Sparkline } from './sparkline';
 import styles from './streamPulseObservabilityTab.scss';
 
 const cx = classNames.bind(styles);
+
+const fmtClock = (ms) => {
+  const s = Math.max(0, Math.round((ms || 0) / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+};
 
 const Badge = ({ value = '' }) => {
   const glyph = severityGlyph(value);
@@ -282,31 +288,6 @@ class RcaActions extends Component {
     );
   }
 }
-
-const TopKpiStrip = ({ kpis = [] }) => {
-  if (!kpis.length) {
-    return null;
-  }
-
-  return (
-    <div className={cx('top-kpis')}>
-      {kpis.map((kpi) => (
-        <div className={cx('kpi-card', statusClass(kpi.status))} key={kpi.id || kpi.key}>
-          <div className={cx('kpi-name')}>{text(kpi.display_name || kpi.key)}</div>
-          <div className={cx('kpi-value')}>{text(kpi.formatted_value || kpi.value)}</div>
-          <div className={cx('kpi-meta')}>
-            {text(kpi.category)}
-            {kpi.release_gate ? ' · gate' : ''}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-TopKpiStrip.propTypes = {
-  kpis: PropTypes.array,
-};
 
 const PerformanceSessionSummary = ({ section }) => (
   <table className={cx('table')}>
@@ -765,6 +746,238 @@ KpiAccordionSection.propTypes = {
   actionsDisabledReason: PropTypes.string,
 };
 
+// ── Design surface: verdict cards, rich KPI grid, session replay, by-section ──
+
+const VERDICT_META = [
+  { key: 'functional', eyebrow: 'FUNCTIONAL · PYTEST' },
+  { key: 'experience', eyebrow: 'EXPERIENCE · OBSERVABILITY' },
+  { key: 'gate', eyebrow: 'RELEASE-GATE CONTRIBUTION' },
+];
+
+const VerdictCards = ({ session = {}, topKpis = [], verdict = null }) => {
+  const v = verdict || {};
+  const gateCrit = topKpis.filter(
+    (k) => k.release_gate && ['failed', 'critical'].includes(statusClass(k.status)),
+  );
+  const cards = {
+    functional: {
+      status: session.functional_status,
+      headline: v.functional_headline || text(session.functional_status) || 'Unknown',
+      note:
+        v.functional_note ||
+        'Functional pass/fail is decided by assertions — never rewritten by experience signals.',
+    },
+    experience: {
+      status: session.observability_status,
+      headline: v.experience_headline || text(session.observability_status) || 'Unknown',
+      note:
+        v.experience_note ||
+        'Experience KPIs are observed alongside the functional result and never block it.',
+    },
+    gate: {
+      status: gateCrit.length ? 'failed' : 'passed',
+      headline: v.gate_headline || `${gateCrit.length} critical KPI${gateCrit.length === 1 ? '' : 's'}`,
+      note:
+        v.gate_note ||
+        (gateCrit.length
+          ? 'Feeds the run-level release gate — not a per-test block.'
+          : 'No release-gate KPI breached for this test.'),
+    },
+  };
+  return (
+    <div className={cx('verdicts')}>
+      {VERDICT_META.map(({ key, eyebrow }) => {
+        const c = cards[key];
+        return (
+          <div className={cx('verdict-card', statusClass(c.status))} key={key}>
+            <div className={cx('verdict-eyebrow')}>{eyebrow}</div>
+            <div className={cx('verdict-headline')}>{text(c.headline)}</div>
+            <p className={cx('verdict-note')}>{text(c.note)}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+VerdictCards.propTypes = {
+  session: PropTypes.object,
+  topKpis: PropTypes.array,
+  verdict: PropTypes.object,
+};
+
+const formatThreshold = (kpi) => {
+  if (kpi.threshold_label) return kpi.threshold_label;
+  const t = kpi.threshold || {};
+  const bound = t.max ?? t.warn ?? t.fail ?? t.value ?? t.min;
+  if (bound === undefined || bound === null) return '';
+  const op = t.min !== undefined && t.max === undefined ? '≥' : '≤';
+  return `${op}${bound}${text(kpi.unit || '')}`;
+};
+
+const TopKpiGrid = ({ kpis = [] }) => {
+  if (!kpis.length) return null;
+  return (
+    <div className={cx('panel')}>
+      <div className={cx('panel-head')}>
+        <h3 className={cx('panel-title')}>Top KPIs</h3>
+        <span className={cx('panel-sub')}>catalog-ranked · release-gate weighted</span>
+      </div>
+      <div className={cx('kpi-grid')}>
+        {kpis.map((kpi) => {
+          const gate = kpi.release_gate && ['failed', 'critical'].includes(statusClass(kpi.status));
+          return (
+            <div className={cx('kpi-tile', statusClass(kpi.status), { gate })} key={kpi.id || kpi.key}>
+              <div className={cx('kpi-tile-name')}>{text(kpi.display_name || kpi.key)}</div>
+              <div className={cx('kpi-tile-value')}>{text(kpi.formatted_value || kpi.value)}</div>
+              <div className={cx('kpi-tile-foot')}>
+                <span className={cx('kpi-tile-status', statusClass(kpi.status))}>
+                  {gate ? 'Critical · gate' : text(kpi.status)}
+                </span>
+                <span className={cx('kpi-tile-thresh')}>{formatThreshold(kpi)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+TopKpiGrid.propTypes = { kpis: PropTypes.array };
+
+class SessionReplay extends Component {
+  static propTypes = { replay: PropTypes.object };
+
+  static defaultProps = { replay: null };
+
+  state = { scrubT: null };
+
+  render() {
+    const replay = this.props.replay || {};
+    const duration = replay.duration_ms || 0;
+    const timeline = replay.timeline || [];
+    const sections = replay.sections || [];
+    const stall = replay.stall_window || null;
+    const { scrubT } = this.state;
+    const cur = scrubT === null ? duration : scrubT;
+
+    if (!replay.has_tracks && !timeline.length) {
+      return (
+        <div className={cx('panel')}>
+          <div className={cx('panel-head')}>
+            <h3 className={cx('panel-title')}>Session Replay</h3>
+          </div>
+          <p className={cx('empty-note')}>
+            {text(replay.note) || 'No per-KPI time-series captured for this session.'}
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className={cx('panel')}>
+        <div className={cx('panel-head')}>
+          <h3 className={cx('panel-title')}>Session Replay</h3>
+          <span className={cx('panel-sub')}>video is the master clock · every KPI moves with the scrubber</span>
+        </div>
+        {timeline.length > 0 && (
+          <div className={cx('replay-timeline')}>
+            {timeline.map((e, i) => (
+              <span className={cx('tl-chip', statusClass(e.status))} key={`${e.offset_ms}-${i}`}>
+                {fmtClock(e.offset_ms)} · {text(e.name)}
+              </span>
+            ))}
+          </div>
+        )}
+        {duration > 0 && (
+          <div className={cx('scrubber')}>
+            <input
+              type="range"
+              min="0"
+              max={duration}
+              value={cur}
+              onChange={(ev) => this.setState({ scrubT: Number(ev.target.value) })}
+              aria-label="Session replay scrubber"
+            />
+            <span className={cx('scrub-clock')}>
+              {fmtClock(cur)} / {fmtClock(duration)}
+            </span>
+          </div>
+        )}
+        {sections.map((sec) => (
+          <div className={cx('replay-section')} key={sec.title}>
+            <div className={cx('replay-section-head')}>
+              <span>{text(sec.title)}</span>
+              <span className={cx('panel-sub')}>{(sec.tracks || []).length} tracks</span>
+            </div>
+            {(sec.tracks || []).map((tr) => (
+              <div className={cx('track')} key={tr.key}>
+                <div className={cx('track-label')}>
+                  <b>{text(tr.display_name)}</b>
+                  <span>
+                    {text(tr.category)}
+                    {tr.unit ? ` · ${tr.unit}` : ''}
+                  </span>
+                </div>
+                <div className={cx('track-spark')}>
+                  <Sparkline series={tr.series} stall={stall} duration={duration} scrubT={cur} />
+                </div>
+                <div className={cx('track-stat')}>
+                  <b>
+                    {text(tr.current)}
+                    <span className={cx('track-unit')}>{text(tr.unit)}</span>
+                  </b>
+                  <span>
+                    avg {text(tr.avg)} · {text(tr.min)}–{text(tr.max)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+}
+
+const KpisBySection = ({ sections = [] }) => {
+  if (!sections.length) return null;
+  return (
+    <div className={cx('panel')}>
+      <div className={cx('panel-head')}>
+        <h3 className={cx('panel-title')}>KPIs by section</h3>
+        <span className={cx('panel-sub')}>full catalog · stat by measurement type</span>
+      </div>
+      <div className={cx('section-chips')}>
+        {sections.map((s) => (
+          <span className={cx('section-chip', statusClass(s.status))} key={s.key || s.title}>
+            {text(s.title)} <b>{(s.rows || []).length}</b>
+          </span>
+        ))}
+      </div>
+      {sections.map((s) => (
+        <div className={cx('by-section')} key={s.key || s.title}>
+          <h4 className={cx('section-subtitle')}>{text(s.title)}</h4>
+          <table className={cx('table')}>
+            <tbody>
+              {(s.rows || []).map((r) => (
+                <tr key={r.key || r.display_name}>
+                  <td>{text(r.display_name || r.key)}</td>
+                  <td className={cx('num')}>{text(r.formatted_value || r.value)}</td>
+                  <td>
+                    <Badge value={r.status} />
+                  </td>
+                  <td className={cx('muted-cell')}>{text(r.measurement || r.owner || '')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+};
+KpisBySection.propTypes = { sections: PropTypes.array };
+
 export class StreamPulseObservabilityTab extends Component {
   static propTypes = {
     logItem: PropTypes.object,
@@ -814,57 +1027,101 @@ export class StreamPulseObservabilityTab extends Component {
     }
 
     const session = data.session || {};
-    const sections = (data.accordion_sections || []).filter(hasSectionContent);
+    const topKpis = data.top_kpis || [];
     const rpItemId = this.props.logItem?.uuid || this.props.logItem?.id;
-    // Honesty: the owner-routed actions (file Jira bug / notify gate / re-run) hit
-    // the live FastBreak backend. When we are showing SAMPLE data (no API URL or a
-    // tagged mock) there is no live backend, so the actions are disabled with an
-    // honest note rather than pretending to act.
+    // Honesty: owner-routed actions hit the live backend; disabled (with an honest
+    // note) for SAMPLE data so we never pretend to act.
     const isSample = !apiBaseUrl || isMockObservability(data);
     const actionsDisabledReason = isSample
       ? 'Actions are disabled for SAMPLE data — connect the FastBreak API to file a Jira bug, ' +
         'notify the release gate, or re-run.'
       : '';
 
+    const rcaSection =
+      (data.accordion_sections || []).find((s) => s.type === 'rca') ||
+      (data.ai_rca_insights || data.rca
+        ? {
+            type: 'rca',
+            status: (data.ai_rca_insights || data.rca || {}).category || 'warning',
+            data: data.ai_rca_insights || data.rca,
+          }
+        : null);
+
+    // RCA + kpi_table + summary are promoted into the design panels above; the rest
+    // (app-health, network, artifacts, history) stay as honest accordions below.
+    const accordions = (data.accordion_sections || []).filter(
+      (s) =>
+        !['rca', 'kpi_table', 'summary'].includes(s.type) && hasSectionContent(s),
+    );
+
+    const chips = [
+      session.device && session.device !== 'unknown' ? text(session.device) : null,
+      session.platform && session.platform !== 'unknown' ? text(session.platform) : null,
+      session.region && session.region !== 'unknown' ? text(session.region) : null,
+      session.network_profile && session.network_profile !== 'unknown'
+        ? text(session.network_profile)
+        : null,
+      session.cuj && session.cuj !== 'unknown' ? `CUJ ${text(session.cuj)}` : null,
+    ].filter(Boolean);
+
     return (
       <div className={cx('stream-pulse-tab')}>
-        <div className={cx('header')}>
-          <div>
-            <div className={cx('title')}>{text(session.name || 'StreamPulse Observability')}</div>
-            <div className={cx('subtitle')}>
-              {[session.platform, session.device, session.region, session.cuj]
-                .filter(Boolean)
-                .map(text)
-                .join(' · ')}
-            </div>
-          </div>
-          <div className={cx('status-row')}>
-            <Badge value={session.functional_status} />
-            <Badge value={session.observability_status} />
-            <Badge value={session.rca_category} />
-          </div>
-        </div>
-        {(!apiBaseUrl || isMockObservability(data)) && (
+        {isSample && (
           <div className={cx('notice')}>
-            {isMockObservability(data)
-              ? 'Showing SAMPLE observability data — not a live measurement (the API was ' +
-                'configured but could not be reached).'
-              : 'STREAM_PULSE_API_URL is not configured. Showing local mock observability data.'}
+            Showing SAMPLE observability data — not a live measurement. Connect the FastBreak API
+            for live KPIs.
           </div>
         )}
-        <TopKpiStrip kpis={data.top_kpis || []} />
-        <div className={cx('sections')}>
-          {sections.map((section) => (
-            <KpiAccordionSection
-              key={section.key || section.title}
-              section={section}
+        <div className={cx('sp-header')}>
+          <div className={cx('sp-title')}>{text(session.name || 'Observability & KPIs')}</div>
+          <div className={cx('sp-chips')}>
+            {chips.map((c, i) => (
+              <span className={cx('sp-chip')} key={i}>
+                {c}
+              </span>
+            ))}
+            {session.rca_category && session.rca_category !== 'UNKNOWN' && (
+              <Badge value={session.rca_category} />
+            )}
+          </div>
+        </div>
+
+        <VerdictCards session={session} topKpis={topKpis} verdict={data.verdict} />
+        <TopKpiGrid kpis={topKpis} />
+
+        {rcaSection && (
+          <div className={cx('panel')}>
+            <div className={cx('panel-head')}>
+              <h3 className={cx('panel-title')}>AI RCA &amp; Insights</h3>
+              <Badge value={rcaSection.status} />
+            </div>
+            <AiRcaInsights
+              section={rcaSection}
               rpItemId={rpItemId}
               functionalStatus={session.functional_status}
               actionsDisabled={isSample}
               actionsDisabledReason={actionsDisabledReason}
             />
-          ))}
-        </div>
+          </div>
+        )}
+
+        <SessionReplay replay={data.session_replay} />
+        <KpisBySection sections={data.kpi_sections || []} />
+
+        {accordions.length > 0 && (
+          <div className={cx('sections')}>
+            {accordions.map((section) => (
+              <KpiAccordionSection
+                key={section.key || section.title}
+                section={section}
+                rpItemId={rpItemId}
+                functionalStatus={session.functional_status}
+                actionsDisabled={isSample}
+                actionsDisabledReason={actionsDisabledReason}
+              />
+            ))}
+          </div>
+        )}
       </div>
     );
   }

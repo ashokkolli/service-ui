@@ -440,3 +440,287 @@ $badge-text-failed: #a61b1b; // ~6.1:1 on the failed tint
   outline: 2px solid $COLOR--topaz;
   outline-offset: 2px;
 }
+
+/* ═══════════════ FASTBREAK observability design surface ═══════════════ */
+$ink: #0b0e14;
+$slate: #5b6472;
+$hair: #e6e9ef;
+$panel-bg: #ffffff;
+$page-bg: #f6f7f9;
+
+.stream-pulse-tab {
+  padding: 20px;
+  background: $page-bg;
+  color: $ink;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sp-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  margin-bottom: 16px;
+}
+.sp-title {
+  font-family: $FONT-SEMIBOLD;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+.sp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.sp-chip {
+  padding: 2px 9px;
+  border: 1px solid $hair;
+  border-radius: 999px;
+  background: $panel-bg;
+  color: $slate;
+  font-size: 11px;
+  font-family: $FONT-SEMIBOLD;
+}
+
+/* Verdict cards */
+.verdicts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.verdict-card {
+  position: relative;
+  padding: 16px 16px 16px 18px;
+  background: $panel-bg;
+  border: 1px solid $hair;
+  border-radius: 12px;
+  overflow: hidden;
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: $COLOR--gray-60;
+  }
+  &.passed::before { background: $COLOR--passed; }
+  &.warning::before { background: $COLOR--warning; }
+  &.failed::before { background: $COLOR--failed; }
+}
+.verdict-eyebrow {
+  color: $slate;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: $FONT-SEMIBOLD;
+}
+.verdict-headline {
+  margin-top: 6px;
+  font-family: $FONT-SEMIBOLD;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  .passed & { color: #157347; }
+  .warning & { color: #9a6700; }
+  .failed & { color: #a61b1b; }
+}
+.verdict-note {
+  margin: 8px 0 0;
+  color: $slate;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Panels */
+.panel {
+  background: $panel-bg;
+  border: 1px solid $hair;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.panel-title {
+  margin: 0;
+  font-family: $FONT-SEMIBOLD;
+  font-size: 15px;
+}
+.panel-sub {
+  color: $slate;
+  font-size: 11.5px;
+}
+.empty-note {
+  color: $slate;
+  font-size: 12.5px;
+  padding: 8px 0;
+}
+
+/* Top KPIs grid */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.kpi-tile {
+  position: relative;
+  padding: 13px 14px;
+  border: 1px solid $hair;
+  border-radius: 10px;
+  background: #fcfcfd;
+  &.gate {
+    border-color: rgba($COLOR--failed, 0.5);
+    box-shadow: 0 0 0 1px rgba($COLOR--failed, 0.25);
+  }
+}
+.kpi-tile-name {
+  color: $slate;
+  font-size: 11.5px;
+  font-family: $FONT-SEMIBOLD;
+}
+.kpi-tile-value {
+  margin-top: 4px;
+  font-family: $FONT-SEMIBOLD;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-tile-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  gap: 8px;
+}
+.kpi-tile-status {
+  font-size: 11px;
+  font-family: $FONT-SEMIBOLD;
+  text-transform: capitalize;
+  &.passed { color: #157347; }
+  &.warning { color: #9a6700; }
+  &.failed { color: #a61b1b; }
+}
+.kpi-tile-thresh {
+  color: $slate;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Session replay */
+.replay-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.tl-chip {
+  padding: 3px 9px;
+  border: 1px solid $hair;
+  border-radius: 6px;
+  background: #fbfbfc;
+  color: $ink;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  &.warning { border-color: rgba($COLOR--warning, 0.5); color: #9a6700; }
+  &.failed { border-color: rgba($COLOR--failed, 0.5); color: #a61b1b; }
+  &.passed { border-color: rgba($COLOR--passed, 0.4); }
+}
+.scrubber {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 14px;
+  input[type='range'] {
+    flex: 1;
+    accent-color: $COLOR--topaz;
+    cursor: pointer;
+  }
+}
+.scrub-clock {
+  color: $slate;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  min-width: 92px;
+  text-align: right;
+}
+.replay-section {
+  border-top: 1px solid $hair;
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.replay-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-family: $FONT-SEMIBOLD;
+  font-size: 12.5px;
+}
+.track {
+  display: grid;
+  grid-template-columns: 150px 1fr 120px;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid #f1f3f6;
+  &:first-of-type { border-top: none; }
+}
+.track-label {
+  display: flex;
+  flex-direction: column;
+  b { font-family: $FONT-SEMIBOLD; font-size: 12.5px; }
+  span { color: $slate; font-size: 10.5px; }
+}
+.track-spark {
+  min-width: 0;
+}
+.track-stat {
+  text-align: right;
+  b {
+    display: block;
+    font-family: $FONT-SEMIBOLD;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+  }
+  span { color: $slate; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+}
+.track-unit { margin-left: 2px; color: $slate; font-size: 10px; }
+
+/* Sparkline SVG */
+.sp-spark { display: block; }
+.sp-spark-area { fill: rgba($COLOR--topaz, 0.1); stroke: none; }
+.sp-spark-line { fill: none; stroke: $COLOR--topaz; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.sp-spark-band { fill: rgba($COLOR--warning, 0.16); }
+.sp-spark-scrub { stroke: $ink; stroke-width: 1; stroke-dasharray: 2 2; opacity: 0.55; }
+.sp-spark-empty { color: $slate; }
+
+/* KPIs by section */
+.section-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.section-chip {
+  padding: 5px 11px;
+  border: 1px solid $hair;
+  border-radius: 8px;
+  background: #fbfbfc;
+  font-size: 12px;
+  font-family: $FONT-SEMIBOLD;
+  b { color: $slate; font-weight: 400; margin-left: 4px; }
+  &.warning { border-color: rgba($COLOR--warning, 0.5); }
+  &.failed { border-color: rgba($COLOR--failed, 0.5); }
+}
+.by-section { margin-top: 10px; }
+.num { font-variant-numeric: tabular-nums; font-family: $FONT-SEMIBOLD; }
+.muted-cell { color: $slate; font-size: 11px; }
