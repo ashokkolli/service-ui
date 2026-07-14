@@ -13,6 +13,7 @@ import {
   crashFreePercent,
   hasSectionContent,
   isHttpUri,
+  isWarningOrFail,
   percent,
   severityGlyph,
   shouldAutoExpandSection,
@@ -27,6 +28,96 @@ const cx = classNames.bind(styles);
 const fmtClock = (ms) => {
   const s = Math.max(0, Math.round((ms || 0) / 1000));
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+};
+
+// Step-hold sample of a [{t,v}] series (t in ms) at time `tMs`: the value in effect is
+// the last REAL sample at or before it — never interpolated into a value the capture
+// did not record. Returns null when nothing is sampleable so the caller shows "—".
+const sampleSeriesAt = (series, tMs) => {
+  if (!series || !series.length) {
+    return null;
+  }
+  let v = series[0].v;
+  for (let i = 0; i < series.length; i += 1) {
+    if (series[i].t <= tMs) {
+      v = series[i].v;
+    } else {
+      break;
+    }
+  }
+  return v;
+};
+
+const fmtNum = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return '—';
+  }
+  const n = Number(value);
+  if (Number.isNaN(n)) {
+    return text(value);
+  }
+  if (Math.abs(n) >= 1000) {
+    return Math.round(n).toLocaleString();
+  }
+  return String(Math.round(n * 100) / 100);
+};
+
+// Resolve a possibly-relative media URL (the API may return `/artifact-store/…/video.mp4`)
+// against the configured API base so the <video> src is absolute + CORS-served. Honesty:
+// an empty/missing URL stays empty so the UI shows an honest "no video" state, never a
+// broken <video> pretending a replay exists.
+const resolveMediaUrl = (url, apiBaseUrl) => {
+  const u = text(url);
+  if (!u) {
+    return '';
+  }
+  if (/^(https?:|data:|blob:)/i.test(u)) {
+    return u;
+  }
+  if (apiBaseUrl) {
+    return `${apiBaseUrl}${u.startsWith('/') ? '' : '/'}${u}`;
+  }
+  return u;
+};
+
+// A foldable section card matching the artifact's card pattern. Native <details> gives
+// keyboard toggling + focus for free (WCAG 2.1.1 / 2.4.7) — meaning is carried by the
+// text title and chevron, never color alone.
+const FoldableCard = ({ title, sub = null, badge = null, defaultOpen = true, hero = false, children }) => (
+  <details className={cx('card', { hero })} open={defaultOpen}>
+    <summary className={cx('card-head')}>
+      <h3 className={cx('card-title')}>{title}</h3>
+      {sub && <span className={cx('card-sub')}>{sub}</span>}
+      <span className={cx('card-spacer')} />
+      {badge}
+      <span className={cx('chev')} aria-hidden="true" />
+    </summary>
+    <div className={cx('card-body')}>{children}</div>
+  </details>
+);
+
+FoldableCard.propTypes = {
+  title: PropTypes.node.isRequired,
+  sub: PropTypes.node,
+  badge: PropTypes.node,
+  defaultOpen: PropTypes.bool,
+  hero: PropTypes.bool,
+  children: PropTypes.node,
+};
+
+// Category → plane title for the honest "not captured" planes surfaced from a real
+// replay's `unavailable` list (e.g. system sampling is Android-only; no HAR → no network).
+const UNAVAILABLE_PLANES = {
+  system: {
+    title: 'Device',
+    note: 'Not captured — on-device system sampling (CPU / memory / fps) is Android-only for this run.',
+  },
+  network: {
+    title: 'Network',
+    note: 'Not captured — no HAR was recorded for this session, so no per-request network track exists.',
+  },
+  quality: { title: 'Video Quality', note: 'Not captured — no per-frame video analysis for this session.' },
+  steps: { title: 'Steps', note: 'Not captured — the run did not emit timed engine steps.' },
 };
 
 const Badge = ({ value = '' }) => {
@@ -844,97 +935,300 @@ const TopKpiGrid = ({ kpis = [] }) => {
 };
 TopKpiGrid.propTypes = { kpis: PropTypes.array };
 
+// ── §4 Session Replay (hero) ─────────────────────────────────────────────────
+// The HTML5 <video> is the MASTER CLOCK. Its timeupdate drives one shared playhead
+// (`scrubMs`) that every KPI plane's sparkline reads at the same instant, so scrub/play
+// moves ALL planes together. Seeking the scrubber or clicking an event chip seeks the
+// video. When the API serves no video URL yet, the scrubber itself becomes the clock so
+// the correlation is still explorable — but we NEVER draw a fake video/court.
 class SessionReplay extends Component {
-  static propTypes = { replay: PropTypes.object };
+  static propTypes = { replay: PropTypes.object, apiBaseUrl: PropTypes.string };
 
-  static defaultProps = { replay: null };
+  static defaultProps = { replay: null, apiBaseUrl: '' };
 
-  state = { scrubT: null };
+  constructor(props) {
+    super(props);
+    this.videoRef = React.createRef();
+    const sections = (props.replay && props.replay.sections) || [];
+    // Expand planes that carry a real, drawable track; collapse the rest.
+    const open = {};
+    sections.forEach((sec, i) => {
+      open[i] = (sec.tracks || []).some((tr) => (tr.series || []).length > 1);
+    });
+    this.state = { open, scrubMs: null, playing: false, videoError: false };
+  }
+
+  get duration() {
+    return (this.props.replay || {}).duration_ms || 0;
+  }
+
+  get cur() {
+    return this.state.scrubMs === null ? 0 : this.state.scrubMs;
+  }
+
+  seekTo = (ms) => {
+    const clamped = Math.max(0, Math.min(this.duration, Math.round(ms)));
+    const video = this.videoRef.current;
+    if (video && !this.state.videoError && Number.isFinite(video.duration)) {
+      try {
+        video.currentTime = clamped / 1000;
+      } catch (e) {
+        /* seeking before metadata is ready — the scrubMs state still drives the planes */
+      }
+    }
+    this.setState({ scrubMs: clamped });
+  };
+
+  handleTimeUpdate = () => {
+    const video = this.videoRef.current;
+    if (video) {
+      this.setState({ scrubMs: Math.round(video.currentTime * 1000) });
+    }
+  };
+
+  togglePlay = () => {
+    const video = this.videoRef.current;
+    if (!video || this.state.videoError) {
+      return;
+    }
+    if (video.paused) {
+      const p = video.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {});
+      }
+    } else {
+      video.pause();
+    }
+  };
+
+  handleScrubPointer = (ev) => {
+    // Left button drag or a fresh pointerdown; ignore hover moves with no button held.
+    if (ev.type === 'pointermove' && ev.buttons === 0) {
+      return;
+    }
+    const rect = ev.currentTarget.getBoundingClientRect();
+    const frac = rect.width ? (ev.clientX - rect.left) / rect.width : 0;
+    this.seekTo(frac * this.duration);
+  };
+
+  togglePlane = (i) =>
+    this.setState((s) => ({ open: { ...s.open, [i]: !s.open[i] } }));
+
+  renderPlane = (sec, i, stall, duration, cur) => {
+    const tracks = sec.tracks || [];
+    const isOpen = Boolean(this.state.open[i]);
+    return (
+      <div className={cx('plane', { closed: !isOpen })} key={sec.key || sec.title}>
+        <button
+          type="button"
+          className={cx('plane-head')}
+          onClick={() => this.togglePlane(i)}
+          aria-expanded={isOpen}
+        >
+          <span className={cx('chev')} aria-hidden="true" />
+          <span className={cx('plane-dot', statusClass(sec.status))} aria-hidden="true" />
+          <span className={cx('plane-name')}>{text(sec.title)}</span>
+          <span className={cx('card-spacer')} />
+          <span className={cx('plane-count')}>{tracks.length} tracks</span>
+        </button>
+        {isOpen && (
+          <div className={cx('plane-body')}>
+            {tracks.map((tr) => {
+              const curV = sampleSeriesAt(tr.series, cur);
+              const hasSeries = (tr.series || []).length > 1;
+              return (
+                <div className={cx('track')} key={tr.key || tr.display_name}>
+                  <div className={cx('track-label')}>
+                    <b>{text(tr.display_name)}</b>
+                    <span>
+                      {text(tr.category)}
+                      {tr.unit ? ` · ${tr.unit}` : ''}
+                    </span>
+                  </div>
+                  <div className={cx('track-spark')}>
+                    <Sparkline series={tr.series} stall={stall} duration={duration} scrubT={cur} />
+                  </div>
+                  <div className={cx('track-stat')}>
+                    <b>
+                      {hasSeries ? fmtNum(curV) : fmtNum(tr.current)}
+                      {tr.unit ? <span className={cx('track-unit')}>{text(tr.unit)}</span> : null}
+                    </b>
+                    <span>
+                      avg {fmtNum(tr.avg)} · {fmtNum(tr.min)}–{fmtNum(tr.max)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  renderUnavailablePlane = (kind) => {
+    const meta = UNAVAILABLE_PLANES[kind] || { title: kind, note: 'Not captured for this session.' };
+    return (
+      <div className={cx('plane', 'plane--unavailable')} key={`unavail-${kind}`}>
+        <div className={cx('plane-head', 'plane-head--static')}>
+          <span className={cx('plane-dot', 'info')} aria-hidden="true" />
+          <span className={cx('plane-name')}>{meta.title}</span>
+          <span className={cx('card-spacer')} />
+          <span className={cx('plane-count', 'plane-count--muted')}>not captured</span>
+        </div>
+        <div className={cx('plane-body')}>
+          <p className={cx('plane-note')}>{meta.note}</p>
+        </div>
+      </div>
+    );
+  };
 
   render() {
     const replay = this.props.replay || {};
-    const duration = replay.duration_ms || 0;
+    const duration = this.duration;
     const timeline = replay.timeline || [];
     const sections = replay.sections || [];
     const stall = replay.stall_window || null;
-    const { scrubT } = this.state;
-    const cur = scrubT === null ? duration : scrubT;
+    const unavailable = Array.isArray(replay.unavailable) ? replay.unavailable : [];
+    const videoUrl = resolveMediaUrl(
+      replay.video_url || (replay.video && replay.video.url),
+      this.props.apiBaseUrl,
+    );
+    const cur = this.cur;
+    const frac = duration ? Math.max(0, Math.min(1, cur / duration)) : 0;
 
-    if (!replay.has_tracks && !timeline.length) {
+    // Honest empty state: nothing real to show — no tracks, no timeline, no video.
+    if (!replay.has_tracks && !timeline.length && !videoUrl && !sections.length) {
       return (
-        <div className={cx('panel')}>
-          <div className={cx('panel-head')}>
-            <h3 className={cx('panel-title')}>Session Replay</h3>
-          </div>
+        <FoldableCard
+          title="Session Replay — correlated to KPIs"
+          sub="video is the master clock · every KPI moves with the scrubber"
+          hero
+        >
           <p className={cx('empty-note')}>
-            {text(replay.note) || 'No per-KPI time-series captured for this session.'}
+            {text(replay.note) || 'No per-KPI time-series or replay video captured for this session.'}
           </p>
-        </div>
+        </FoldableCard>
       );
     }
 
     return (
-      <div className={cx('panel')}>
-        <div className={cx('panel-head')}>
-          <h3 className={cx('panel-title')}>Session Replay</h3>
-          <span className={cx('panel-sub')}>video is the master clock · every KPI moves with the scrubber</span>
-        </div>
-        {timeline.length > 0 && (
-          <div className={cx('replay-timeline')}>
-            {timeline.map((e, i) => (
-              <span className={cx('tl-chip', statusClass(e.status))} key={`${e.offset_ms}-${i}`}>
-                {fmtClock(e.offset_ms)} · {text(e.name)}
-              </span>
-            ))}
-          </div>
-        )}
-        {duration > 0 && (
-          <div className={cx('scrubber')}>
-            <input
-              type="range"
-              min="0"
-              max={duration}
-              value={cur}
-              onChange={(ev) => this.setState({ scrubT: Number(ev.target.value) })}
-              aria-label="Session replay scrubber"
-            />
-            <span className={cx('scrub-clock')}>
-              {fmtClock(cur)} / {fmtClock(duration)}
-            </span>
-          </div>
-        )}
-        {sections.map((sec) => (
-          <div className={cx('replay-section')} key={sec.title}>
-            <div className={cx('replay-section-head')}>
-              <span>{text(sec.title)}</span>
-              <span className={cx('panel-sub')}>{(sec.tracks || []).length} tracks</span>
-            </div>
-            {(sec.tracks || []).map((tr) => (
-              <div className={cx('track')} key={tr.key}>
-                <div className={cx('track-label')}>
-                  <b>{text(tr.display_name)}</b>
-                  <span>
-                    {text(tr.category)}
-                    {tr.unit ? ` · ${tr.unit}` : ''}
+      <FoldableCard
+        title="Session Replay — correlated to KPIs"
+        sub="video is the master clock · every KPI moves with the scrubber"
+        hero
+      >
+        <div className={cx('replay-stage')}>
+          <div className={cx('replay-video-col')}>
+            <div className={cx('replay-video')}>
+              {videoUrl && !this.state.videoError ? (
+                <video
+                  ref={this.videoRef}
+                  className={cx('replay-video-el')}
+                  src={videoUrl}
+                  preload="metadata"
+                  playsInline
+                  onTimeUpdate={this.handleTimeUpdate}
+                  onPlay={() => this.setState({ playing: true })}
+                  onPause={() => this.setState({ playing: false })}
+                  onError={() => this.setState({ videoError: true })}
+                >
+                  <track kind="captions" />
+                </video>
+              ) : (
+                <div className={cx('replay-video-empty')} role="note">
+                  <span className={cx('replay-video-empty-icon')} aria-hidden="true">
+                    ▶
                   </span>
+                  {this.state.videoError ? (
+                    <span>Replay video failed to load. The scrubber below still drives every KPI plane.</span>
+                  ) : (
+                    <span>
+                      No replay video is served by the API for this session yet. The scrubber below
+                      still drives every KPI plane.
+                    </span>
+                  )}
                 </div>
-                <div className={cx('track-spark')}>
-                  <Sparkline series={tr.series} stall={stall} duration={duration} scrubT={cur} />
+              )}
+              <div className={cx('replay-controls')}>
+                <button
+                  type="button"
+                  className={cx('replay-play')}
+                  onClick={this.togglePlay}
+                  disabled={!videoUrl || this.state.videoError}
+                  aria-label={this.state.playing ? 'Pause replay' : 'Play replay'}
+                >
+                  {this.state.playing ? '❚❚' : '▶'}
+                </button>
+                <div
+                  className={cx('replay-scrub')}
+                  onPointerDown={this.handleScrubPointer}
+                  onPointerMove={this.handleScrubPointer}
+                  role="slider"
+                  tabIndex={0}
+                  aria-label="Session replay scrubber"
+                  aria-valuemin={0}
+                  aria-valuemax={Math.round(duration / 1000)}
+                  aria-valuenow={Math.round(cur / 1000)}
+                  aria-valuetext={`${fmtClock(cur)} of ${fmtClock(duration)}`}
+                  onKeyDown={(ev) => {
+                    if (ev.key === 'ArrowRight') this.seekTo(cur + 1000);
+                    if (ev.key === 'ArrowLeft') this.seekTo(cur - 1000);
+                  }}
+                >
+                  <div className={cx('replay-strack')} />
+                  {stall && duration > 0 && (
+                    <div
+                      className={cx('replay-sband')}
+                      style={{
+                        left: `${(stall.start_ms / duration) * 100}%`,
+                        width: `${Math.max(1, ((stall.end_ms - stall.start_ms) / duration) * 100)}%`,
+                      }}
+                      title="Stall window"
+                    />
+                  )}
+                  <div className={cx('replay-sfill')} style={{ width: `${frac * 100}%` }} />
+                  {timeline.map((e, i) => (
+                    <span
+                      key={`mk-${e.offset_ms}-${i}`}
+                      className={cx('replay-mk', statusClass(e.status))}
+                      style={{ left: `${duration ? (e.offset_ms / duration) * 100 : 0}%` }}
+                      title={`${text(e.name)} @ ${fmtClock(e.offset_ms)}`}
+                    />
+                  ))}
+                  <div className={cx('replay-handle')} style={{ left: `${frac * 100}%` }} />
                 </div>
-                <div className={cx('track-stat')}>
-                  <b>
-                    {text(tr.current)}
-                    <span className={cx('track-unit')}>{text(tr.unit)}</span>
-                  </b>
-                  <span>
-                    avg {text(tr.avg)} · {text(tr.min)}–{text(tr.max)}
-                  </span>
-                </div>
+                <span className={cx('replay-tcode')}>
+                  {fmtClock(cur)} / {fmtClock(duration)}
+                </span>
               </div>
-            ))}
+            </div>
+            {timeline.length > 0 && (
+              <div className={cx('replay-events')}>
+                {timeline.map((e, i) => (
+                  <button
+                    type="button"
+                    className={cx('replay-evchip', statusClass(e.status))}
+                    key={`ev-${e.offset_ms}-${i}`}
+                    onClick={() => this.seekTo(e.offset_ms)}
+                  >
+                    {fmtClock(e.offset_ms)} {text(e.name)}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+          <div className={cx('replay-planes')}>
+            {sections.map((sec, i) => this.renderPlane(sec, i, stall, duration, cur))}
+            {unavailable.map((kind) => this.renderUnavailablePlane(kind))}
+          </div>
+        </div>
+        <p className={cx('footnote')}>
+          Scrub to a flagged moment: every KPI plane&apos;s playhead moves together and the shaded
+          band marks the stall across all planes. Values shown are the real captured samples at that
+          instant — un-captured planes read &ldquo;not captured&rdquo;, never a fabricated curve.
+        </p>
+      </FoldableCard>
     );
   }
 }
@@ -1090,11 +1384,11 @@ export class StreamPulseObservabilityTab extends Component {
         <TopKpiGrid kpis={topKpis} />
 
         {rcaSection && (
-          <div className={cx('panel')}>
-            <div className={cx('panel-head')}>
-              <h3 className={cx('panel-title')}>AI RCA &amp; Insights</h3>
-              <Badge value={rcaSection.status} />
-            </div>
+          <FoldableCard
+            title="AI RCA & Insights"
+            badge={<Badge value={rcaSection.status} />}
+            defaultOpen={isWarningOrFail(rcaSection.status)}
+          >
             <AiRcaInsights
               section={rcaSection}
               rpItemId={rpItemId}
@@ -1102,10 +1396,10 @@ export class StreamPulseObservabilityTab extends Component {
               actionsDisabled={isSample}
               actionsDisabledReason={actionsDisabledReason}
             />
-          </div>
+          </FoldableCard>
         )}
 
-        <SessionReplay replay={data.session_replay} />
+        <SessionReplay replay={data.session_replay} apiBaseUrl={apiBaseUrl} />
         <KpisBySection sections={data.kpi_sections || []} />
 
         {accordions.length > 0 && (

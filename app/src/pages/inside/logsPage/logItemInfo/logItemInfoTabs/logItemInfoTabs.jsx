@@ -56,27 +56,27 @@ const cx = classNames.bind(styles);
 const messages = defineMessages({
   stackTab: {
     id: 'LogItemInfoTabs.stackTab',
-    defaultMessage: 'Stack trace',
+    defaultMessage: 'STACK TRACE',
   },
   logsTab: {
     id: 'LogItemInfoTabs.logsTab',
-    defaultMessage: 'All logs',
+    defaultMessage: 'ALL LOGS',
   },
   attachmentsTab: {
     id: 'LogItemInfoTabs.attachmentsTab',
-    defaultMessage: 'Attachments',
+    defaultMessage: 'ATTACHMENTS',
   },
   detailsTab: {
     id: 'LogItemInfoTabs.detailsTab',
-    defaultMessage: 'Item details',
+    defaultMessage: 'ITEM DETAILS',
   },
   historyTab: {
     id: 'LogItemInfoTabs.historyTab',
-    defaultMessage: 'History of actions',
+    defaultMessage: 'HISTORY OF ACTIONS',
   },
   observabilityTab: {
     id: 'LogItemInfoTabs.observabilityTab',
-    defaultMessage: 'Observability & KPIs',
+    defaultMessage: 'OBSERVABILITY & KPIS',
   },
 });
 

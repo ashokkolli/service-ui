@@ -32,3 +32,4 @@ release/
 .local/
 .serena/
 .cursor/
+app/.tsbuildinfo
