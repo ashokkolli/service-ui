@@ -24,6 +24,108 @@ export const statusClass = (status) => {
 
 export const isWarningOrFail = (status) => ['warning', 'failed'].includes(statusClass(status));
 
+// ── KPI display state (Top-KPI cards) ──────────────────────────────────────
+// FIVE states, because the three pass/warn/fail buckets overload two very
+// different things onto the same swatch:
+//
+//   breached  ▲  a budget resolved and the value is outside it
+//   at_risk   ◆  a budget resolved and the value is near the edge
+//   passed    ●  a budget ACTUALLY RESOLVED and the value is inside it
+//   observed  ○  measured, but nothing was checked against it (no budget)
+//   no_data   —  not measured at all
+//
+// 'passed' must require an explicit pass. An unrecognised status is an
+// OBSERVATION, never a pass — we do not paint a green tick on a number that
+// nothing was judged against, and 'observed' is deliberately neutral slate
+// (neither red nor green) so it reads as "recorded", not "fine".
+//
+// A real measured 0 (e.g. segment_failure_rate = 0.0, a GOOD result) is
+// structurally distinct from an absence: it renders as a normal solid card
+// reading "0%", while no_data renders as an em-dash on a hatched card.
+const KPI_STATE_FALLBACK = {
+  critical: { state: 'breached', glyph: '▲', label: 'Breached' },
+  failed: { state: 'breached', glyph: '▲', label: 'Breached' },
+  fail: { state: 'breached', glyph: '▲', label: 'Breached' },
+  error: { state: 'breached', glyph: '▲', label: 'Breached' },
+  breached: { state: 'breached', glyph: '▲', label: 'Breached' },
+  warning: { state: 'at_risk', glyph: '◆', label: 'At risk' },
+  warn: { state: 'at_risk', glyph: '◆', label: 'At risk' },
+  regressed: { state: 'at_risk', glyph: '◆', label: 'At risk' },
+  at_risk: { state: 'at_risk', glyph: '◆', label: 'At risk' },
+  passed: { state: 'passed', glyph: '●', label: 'Within budget' },
+  pass: { state: 'passed', glyph: '●', label: 'Within budget' },
+  good: { state: 'passed', glyph: '●', label: 'Within budget' },
+  ok: { state: 'passed', glyph: '●', label: 'Within budget' },
+  no_data: { state: 'no_data', glyph: '—', label: 'Not measured' },
+  not_measured: { state: 'no_data', glyph: '—', label: 'Not measured' },
+  not_captured: { state: 'no_data', glyph: '—', label: 'Not measured' },
+  missing: { state: 'no_data', glyph: '—', label: 'Not measured' },
+};
+
+const KPI_STATE_OBSERVED = { state: 'observed', glyph: '○', label: 'Observed' };
+
+export const kpiDisplayState = (kpi = {}) => {
+  // The backend already resolves this (display_state/state_glyph/state_label).
+  // Prefer it so the card and the API tell exactly the same story; the map above
+  // is only a fallback for payloads older than that contract.
+  if (kpi.display_state && KPI_STATE_FALLBACK[kpi.display_state]) {
+    return {
+      state: kpi.display_state,
+      glyph: kpi.state_glyph || KPI_STATE_FALLBACK[kpi.display_state].glyph,
+      label: kpi.state_label || KPI_STATE_FALLBACK[kpi.display_state].label,
+    };
+  }
+
+  if (kpi.display_state === 'observed') {
+    return {
+      state: 'observed',
+      glyph: kpi.state_glyph || KPI_STATE_OBSERVED.glyph,
+      label: kpi.state_label || KPI_STATE_OBSERVED.label,
+    };
+  }
+
+  const value = kpi.display_value !== undefined && kpi.display_value !== '' ? kpi.display_value : kpi.value;
+
+  if (value === null || value === undefined || value === '') {
+    return KPI_STATE_FALLBACK.no_data;
+  }
+
+  return KPI_STATE_FALLBACK[text(kpi.status).toLowerCase()] || KPI_STATE_OBSERVED;
+};
+
+// Never print a raw dotted series key at a human. The backend sets
+// display_name = key when the KPI catalog has no label for it, so "present"
+// is not the same as "human" — detect the machine key and title-case its tail.
+export const humanizeKpiKey = (key) => {
+  const raw = text(key);
+
+  if (!raw) {
+    return 'Unnamed KPI';
+  }
+
+  const tail = raw.includes('.') ? raw.split('.').pop() : raw;
+
+  return (
+    tail
+      .replace(/_(ms|s|pct|percent|ratio|rate|count|mb|kb|bps|fps)$/i, '')
+      .split(/[_\s]+/)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ') || raw
+  );
+};
+
+export const kpiDisplayName = (kpi = {}) => {
+  const rawKey = text(kpi.raw_key || kpi.key);
+  const label = text(kpi.display_label || kpi.display_name);
+
+  if (!label || label === rawKey || /^[a-z0-9_]+(\.[a-z0-9_]+)+$/.test(label)) {
+    return humanizeKpiKey(rawKey || label);
+  }
+
+  return label;
+};
+
 // Severity glyph so a badge is never color-only (WCAG 1.4.1 Use of Color). The
 // neutral 'info' badge stays glyph-free so it does not read as a pass/warn/fail
 // signal. Glyphs are decorative (paired with the text label) and rendered

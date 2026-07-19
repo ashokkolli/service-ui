@@ -313,20 +313,83 @@ details[open] > .card-head .chev {
 }
 .kpi-tile {
   position: relative;
+  display: flex;
+  flex-direction: column;
   padding: 11px 12px;
   border: 1px solid var(--sp-line);
   border-radius: 10px;
   background: var(--sp-surface-2);
+
+  /* Left status stripe. `passed` (green) is reachable ONLY from an explicit pass —
+     an unrecognised status resolves to `observed`, which is neutral slate. */
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--sp-line);
+  }
+  &.state-breached::before {
+    background: var(--sp-crit);
+  }
+  &.state-at_risk::before {
+    background: var(--sp-warn);
+  }
+  &.state-passed::before {
+    background: var(--sp-ok);
+  }
+  &.state-observed::before {
+    background: var(--sp-faint);
+  }
+
+  /* Not measured: dashed border, hatched fill, no stripe, no shadow. An absence must be
+     structurally impossible to confuse with a real measured 0. */
+  &.state-no_data {
+    border-style: dashed;
+    border-color: color-mix(in srgb, var(--sp-line) 80%, transparent);
+    box-shadow: none;
+    background-color: transparent;
+    background-image: repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 5px,
+      color-mix(in srgb, var(--sp-line) 55%, transparent) 5px,
+      color-mix(in srgb, var(--sp-line) 55%, transparent) 6px
+    );
+    &::before {
+      display: none;
+    }
+  }
+
   &.gate {
     border-color: color-mix(in srgb, var(--sp-crit) 45%, var(--sp-line));
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--sp-crit) 25%, transparent);
   }
 }
+.kpi-tile-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 26px;
+}
 .kpi-tile-name {
   color: var(--sp-muted);
   font-size: 11px;
   font-family: $FONT-SEMIBOLD;
-  min-height: 26px;
+}
+.kpi-tile-gate {
+  flex: none;
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--sp-crit) 40%, var(--sp-line));
+  border-radius: 4px;
+  color: var(--sp-crit);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  font-family: $FONT-SEMIBOLD;
 }
 .kpi-tile-value {
   margin-top: 4px;
@@ -335,32 +398,122 @@ details[open] > .card-head .chev {
   font-size: 22px;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
+  &.absent {
+    color: var(--sp-faint);
+    font-weight: 400;
+  }
 }
-.kpi-tile-foot {
+.kpi-tile-unit {
+  margin-left: 3px;
+  color: var(--sp-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.kpi-tile-state {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-top: 8px;
-  gap: 8px;
-}
-.kpi-tile-status {
+  gap: 5px;
+  margin-top: 6px;
   font-size: 11px;
   font-family: $FONT-SEMIBOLD;
-  text-transform: capitalize;
-  &.passed {
-    color: var(--sp-ok);
-  }
-  &.warning {
-    color: var(--sp-warn);
-  }
-  &.failed {
+  color: var(--sp-muted);
+  &.state-breached {
     color: var(--sp-crit);
   }
+  &.state-at_risk {
+    color: var(--sp-warn);
+  }
+  &.state-passed {
+    color: var(--sp-ok);
+  }
+  &.state-observed,
+  &.state-no_data {
+    color: var(--sp-faint);
+  }
 }
-.kpi-tile-thresh {
+.kpi-tile-glyph {
+  font-size: 10px;
+  line-height: 1;
+}
+.kpi-tile-note {
+  margin: 6px 0 0;
   color: var(--sp-faint);
   font-size: 10px;
+  line-height: 1.35;
+}
+
+/* value-vs-budget meter */
+.kpi-budget {
+  margin-top: 8px;
+}
+.kpi-budget-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
+}
+.kpi-budget-target {
+  color: var(--sp-muted);
+  font-family: var(--sp-mono);
+}
+.kpi-budget-delta {
+  color: var(--sp-faint);
+  text-align: right;
+}
+.kpi-meter {
+  position: relative;
+  height: 5px;
+  margin-top: 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--sp-line) 70%, transparent);
+  overflow: hidden;
+  &.breached .kpi-meter-fill {
+    background: var(--sp-crit);
+  }
+}
+.kpi-meter-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--sp-accent) 70%, transparent);
+}
+.kpi-meter-tick {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--sp-ink);
+  opacity: 0.55;
+}
+.kpi-meter-overflow {
+  position: absolute;
+  right: 1px;
+  top: -4px;
+  color: var(--sp-crit);
+  font-size: 10px;
+  line-height: 1;
+}
+.kpi-rollup {
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  .state-breached {
+    color: var(--sp-crit);
+  }
+  .state-at_risk {
+    color: var(--sp-warn);
+  }
+  .state-passed {
+    color: var(--sp-ok);
+  }
+  .state-observed,
+  .state-no_data {
+    color: var(--sp-faint);
+  }
 }
 
 /* ── §4 session replay (hero) ───────────────────────────────────────────── */
@@ -763,17 +916,179 @@ details[open] > .card-head .chev {
 .by-section {
   margin-top: 10px;
 }
-.num {
-  font-variant-numeric: tabular-nums;
-  font-family: var(--sp-mono);
-  font-weight: 700;
+.by-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
 }
-.muted-cell {
+.kpi-grid-empty {
+  margin: 0;
+  padding: 10px 12px;
   color: var(--sp-faint);
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-style: italic;
+  border: 1px dashed color-mix(in srgb, var(--sp-line) 80%, transparent);
+  border-radius: 6px;
 }
+
+/* ── KPIs-by-section: two-column grid ────────────────────────────────────────
+   Replaces the old 4-column <table>. The table's failure was structural: a long KPI
+   name reflowed the numeric column, so no two values ever lined up, and its 4th column
+   rendered `measurement || owner` — a field the API has never sent, which is why every
+   row read "UNASSIGNED".
+
+   Each row is an identical sub-grid `minmax(0,1fr) $rail`, so the value rail sits at the
+   SAME x on every row of a column: that is the actual fix for "misaligned", not
+   text-align alone. grid-auto-rows: 1fr keeps a wrapped two-line name from jittering the
+   row beside it. */
+$kpi-rail: 96px;
+
+.kpi-rows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 6px 14px;
+}
+@media (max-width: 900px) {
+  .kpi-rows {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.kpi-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) $kpi-rail;
+  align-content: start;
+  gap: 2px 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--sp-line);
+  border-radius: 6px;
+  background: var(--sp-panel, transparent);
+
+  /* Not measured: dashed + hatched, exactly as the Top-strip tile. An absence must be
+     structurally impossible to mistake for a measured 0 — which renders as an ordinary
+     solid cell reading "0 ms". */
+  &.state-no_data {
+    border-style: dashed;
+    border-color: color-mix(in srgb, var(--sp-line) 80%, transparent);
+    background-color: transparent;
+    background-image: repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 5px,
+      color-mix(in srgb, var(--sp-line) 55%, transparent) 5px,
+      color-mix(in srgb, var(--sp-line) 55%, transparent) 6px
+    );
+  }
+}
+.kpi-row-main {
+  min-width: 0;
+}
+.kpi-row-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--sp-text, inherit);
+  font-size: 12px;
+  font-family: $FONT-SEMIBOLD;
+  line-height: 1.25;
+}
+.kpi-row-prov {
+  display: block;
+  margin-top: 1px;
+  color: var(--sp-faint);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.kpi-row-inferred {
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.kpi-row-value {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
+  white-space: nowrap;
+  font-family: var(--sp-mono);
+  font-variant-numeric: tabular-nums;
+  &.absent {
+    color: var(--sp-faint);
+  }
+}
+.kpi-row-num {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.kpi-row-unit {
+  margin-left: 3px;
+  color: var(--sp-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+/* State word and the budget line share one baseline row spanning both columns, so the
+   verdict and the number it refers to read as one sentence. */
+.kpi-row-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.kpi-row-state {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+  font-family: $FONT-SEMIBOLD;
+  color: var(--sp-muted);
+  &.state-breached {
+    color: var(--sp-crit);
+  }
+  &.state-at_risk {
+    color: var(--sp-warn);
+  }
+  &.state-passed {
+    color: var(--sp-ok);
+  }
+  &.state-observed,
+  &.state-no_data {
+    color: var(--sp-faint);
+  }
+}
+.kpi-row-glyph {
+  font-size: 9px;
+  line-height: 1;
+}
+.kpi-row-note {
+  min-width: 0;
+  color: var(--sp-faint);
+}
+.kpi-row-budget {
+  font-family: var(--sp-mono);
+  font-variant-numeric: tabular-nums;
+}
+.kpi-row-delta {
+  margin-left: 6px;
+  &.breached {
+    color: var(--sp-crit);
+  }
+}
+.kpi-rollup-part {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+/* `.num` and `.muted-cell` were removed with the by-section <table>: their only consumer
+   was that table's numeric column and its `measurement || owner` column. `.muted-cell`'s
+   text-transform: uppercase is what turned the API's literal `owner: "unassigned"` into
+   the "UNASSIGNED" that appeared on every row -- a value no KPI ever actually carried. */
 
 /* ── tables (shared: network / artifacts / history / by-section) ─────────── */
 .table {

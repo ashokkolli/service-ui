@@ -14,6 +14,8 @@ import {
   hasSectionContent,
   isHttpUri,
   isWarningOrFail,
+  kpiDisplayName,
+  kpiDisplayState,
   percent,
   severityGlyph,
   shouldAutoExpandSection,
@@ -896,39 +898,161 @@ VerdictCards.propTypes = {
   verdict: PropTypes.object,
 };
 
+// Fallback only — used when the payload predates `threshold_view`. Handles BOTH the
+// legacy {max|min|warn|fail|value} shape and the current {budget, direction} shape;
+// the old version read only the legacy keys, so it silently rendered an EMPTY budget
+// for every KPI the live backend actually serves.
 const formatThreshold = (kpi) => {
   if (kpi.threshold_label) return kpi.threshold_label;
   const t = kpi.threshold || {};
+  if (t.budget !== undefined && t.budget !== null) {
+    return `${t.direction === 'min' ? '≥' : '≤'}${t.budget}${text(kpi.unit === 'fraction' ? '' : kpi.unit)}`;
+  }
   const bound = t.max ?? t.warn ?? t.fail ?? t.value ?? t.min;
   if (bound === undefined || bound === null) return '';
   const op = t.min !== undefined && t.max === undefined ? '≥' : '≤';
   return `${op}${bound}${text(kpi.unit || '')}`;
 };
 
+// Value-vs-budget row. The budget tick sits at the same x on every card, so the row of
+// ticks reads as one shared reference line down the grid. Numbers come from the
+// backend's threshold_view, which pins budget and delta to the VALUE's own scale — the
+// old footer compared e.g. "873" against a raw "3000.0" from a different unit basis.
+const KpiBudgetMeter = ({ view }) => {
+  const tick = view.tick_pct === null || view.tick_pct === undefined ? 62 : view.tick_pct;
+  const fill = Math.max(0, Math.min(100, view.bar_pct === null || view.bar_pct === undefined ? 0 : view.bar_pct));
+
+  return (
+    <div className={cx('kpi-budget')}>
+      <div className={cx('kpi-budget-line')}>
+        <span className={cx('kpi-budget-target')}>
+          {text(view.comparator)} {text(view.budget_text)}
+        </span>
+        <span className={cx('kpi-budget-delta')}>{text(view.delta_text)}</span>
+      </div>
+      <div
+        className={cx('kpi-meter', { breached: Boolean(view.breached) })}
+        role="img"
+        aria-label={`${text(view.value_text)} against a budget of ${text(view.comparator)} ${text(
+          view.budget_text,
+        )}; ${text(view.delta_text)}`}
+      >
+        <span className={cx('kpi-meter-fill')} style={{ width: `${fill}%` }} />
+        <span className={cx('kpi-meter-tick')} style={{ left: `${tick}%` }} aria-hidden="true" />
+        {view.overflow && (
+          <span className={cx('kpi-meter-overflow')} aria-hidden="true">
+            »
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+KpiBudgetMeter.propTypes = { view: PropTypes.object.isRequired };
+
+// Honest by construction:
+//  - `no_data` renders as an em-dash on a hatched, dashed-border card with no shadow.
+//    It can never be mistaken for a measurement, and a real measured 0 renders as a
+//    normal solid card reading "0%".
+//  - "Observed" (measured, no budget) is visually separate from "Within budget". We
+//    never show a pass swatch for a number nothing was checked against.
+//  - Never color alone (WCAG 1.4.1): every state carries glyph + word + color.
+// Display-only. Nothing here changes pass/fail; gating lives in the test's
+// PASS_CRITERIA_ASSERTED and the KPI catalog budgets.
+const KpiTile = ({ kpi }) => {
+  const { state, glyph, label } = kpiDisplayState(kpi);
+  const isNoData = state === 'no_data';
+  const name = kpiDisplayName(kpi);
+  const value =
+    kpi.display_value !== null && kpi.display_value !== undefined && kpi.display_value !== ''
+      ? kpi.display_value
+      : kpi.formatted_value;
+  const unit = text(kpi.display_unit);
+  const view = kpi.threshold_view;
+  const legacyThreshold = view ? '' : formatThreshold(kpi);
+  const isGate = Boolean(kpi.release_gate);
+  // The `gate` emphasis border is reserved for a release-gate KPI that actually
+  // BREACHED. A passing gate KPI still gets the GATE chip, but must not wear the
+  // critical border — that would read as a failure it did not have.
+  const gate = isGate && state === 'breached';
+
+  return (
+    <div className={cx('kpi-tile', `state-${state}`, { gate })} data-state={state} key={kpi.id || kpi.key}>
+      <div className={cx('kpi-tile-head')}>
+        <span className={cx('kpi-tile-name')} title={name}>
+          {name}
+        </span>
+        {isGate && (
+          <span className={cx('kpi-tile-gate')} title="Release-gate KPI">
+            GATE
+          </span>
+        )}
+      </div>
+
+      {isNoData ? (
+        <div className={cx('kpi-tile-value', 'absent')} aria-hidden="true">
+          —
+        </div>
+      ) : (
+        <div className={cx('kpi-tile-value')}>
+          {text(value)}
+          {unit && <span className={cx('kpi-tile-unit')}>{unit}</span>}
+        </div>
+      )}
+
+      <div className={cx('kpi-tile-state', `state-${state}`)}>
+        <span className={cx('kpi-tile-glyph')} aria-hidden="true">
+          {glyph}
+        </span>
+        {label}
+      </div>
+
+      {isNoData && (
+        <p className={cx('kpi-tile-note')}>
+          {text(kpi.no_data_reason) || 'Not captured on this run — no value was recorded.'}
+        </p>
+      )}
+
+      {!isNoData && view && <KpiBudgetMeter view={view} />}
+
+      {!isNoData && !view && (
+        <p className={cx('kpi-tile-note')}>
+          {legacyThreshold
+            ? `Budget ${legacyThreshold}`
+            : 'No budget defined — recorded for observation, not judged.'}
+        </p>
+      )}
+    </div>
+  );
+};
+
+KpiTile.propTypes = { kpi: PropTypes.object.isRequired };
+
 const TopKpiGrid = ({ kpis = [] }) => {
   if (!kpis.length) return null;
+
+  const breached = kpis.filter((k) => kpiDisplayState(k).state === 'breached').length;
+  const absent = kpis.filter((k) => kpiDisplayState(k).state === 'no_data').length;
+
   return (
     <div className={cx('panel')}>
       <div className={cx('panel-head')}>
         <h3 className={cx('panel-title')}>Top KPIs</h3>
         <span className={cx('panel-sub')}>catalog-ranked · release-gate weighted</span>
+        <span className={cx('kpi-rollup')}>
+          {breached > 0 ? (
+            <b className={cx('state-breached')}>▲ {breached} breached</b>
+          ) : (
+            <b className={cx('state-passed')}>● none breached</b>
+          )}
+          {absent > 0 && <span className={cx('state-no_data')}> · — {absent} not measured</span>}
+        </span>
       </div>
       <div className={cx('kpi-grid')}>
-        {kpis.map((kpi) => {
-          const gate = kpi.release_gate && ['failed', 'critical'].includes(statusClass(kpi.status));
-          return (
-            <div className={cx('kpi-tile', statusClass(kpi.status), { gate })} key={kpi.id || kpi.key}>
-              <div className={cx('kpi-tile-name')}>{text(kpi.display_name || kpi.key)}</div>
-              <div className={cx('kpi-tile-value')}>{text(kpi.formatted_value || kpi.value)}</div>
-              <div className={cx('kpi-tile-foot')}>
-                <span className={cx('kpi-tile-status', statusClass(kpi.status))}>
-                  {gate ? 'Critical · gate' : text(kpi.status)}
-                </span>
-                <span className={cx('kpi-tile-thresh')}>{formatThreshold(kpi)}</span>
-              </div>
-            </div>
-          );
-        })}
+        {kpis.map((kpi) => (
+          <KpiTile kpi={kpi} key={kpi.id || kpi.key} />
+        ))}
       </div>
     </div>
   );
@@ -1233,13 +1357,118 @@ class SessionReplay extends Component {
   }
 }
 
+// One KPI in the by-section grid. Deliberately the SAME vocabulary as KpiTile (the Top
+// strip) — kpiDisplayName + kpiDisplayState + threshold_view — because two surfaces that
+// describe the same KPI with two different words is how a "UNKNOWN / UNASSIGNED" column
+// survived here for months. This is the compact form of the tile, not a second dialect.
+//
+// Honesty, identical to the tile:
+//  - no_data renders an em-dash on a hatched, dashed cell and states WHY. Never a 0.
+//  - a measured 0 renders as a solid, ordinary cell reading "0 ms". Structurally distinct.
+//  - "Observed" (measured, no budget) never wears a pass swatch.
+const KpiGridRow = ({ kpi }) => {
+  const { state, glyph, label } = kpiDisplayState(kpi);
+  const isNoData = state === 'no_data';
+  const name = kpiDisplayName(kpi);
+  const view = kpi.threshold_view;
+  const provenance = kpi.provenance;
+  const value =
+    kpi.display_value !== null && kpi.display_value !== undefined && kpi.display_value !== ''
+      ? kpi.display_value
+      : kpi.formatted_value;
+  const unit = text(kpi.display_unit);
+
+  return (
+    <div className={cx('kpi-row', `state-${state}`)} data-state={state}>
+      <div className={cx('kpi-row-main')}>
+        <span className={cx('kpi-row-name')} title={`${name} (${text(kpi.raw_key || kpi.key)})`}>
+          {name}
+        </span>
+        {provenance && (
+          <span className={cx('kpi-row-prov')} title={text(provenance.detail)}>
+            {text(provenance.label)}
+            {provenance.inferred && <em className={cx('kpi-row-inferred')}> · inferred</em>}
+          </span>
+        )}
+      </div>
+
+      {isNoData ? (
+        <div className={cx('kpi-row-value', 'absent')}>
+          <span aria-hidden="true">—</span>
+        </div>
+      ) : (
+        <div className={cx('kpi-row-value')}>
+          <span className={cx('kpi-row-num')}>{text(value)}</span>
+          {unit && <span className={cx('kpi-row-unit')}>{unit}</span>}
+        </div>
+      )}
+
+      <div className={cx('kpi-row-foot')}>
+        <span className={cx('kpi-row-state', `state-${state}`)}>
+          <span className={cx('kpi-row-glyph')} aria-hidden="true">
+            {glyph}
+          </span>
+          {label}
+        </span>
+        {isNoData ? (
+          <span className={cx('kpi-row-note')}>
+            {text(kpi.no_data_reason) || 'Not captured on this run — no value was recorded.'}
+          </span>
+        ) : (
+          <span className={cx('kpi-row-note')}>
+            {view ? (
+              <Fragment>
+                <span className={cx('kpi-row-budget')}>
+                  {text(view.comparator)} {text(view.budget_text)}
+                </span>
+                <span className={cx('kpi-row-delta', { breached: Boolean(view.breached) })}>
+                  {text(view.delta_text)}
+                </span>
+              </Fragment>
+            ) : (
+              'no budget defined — recorded for observation, not judged'
+            )}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+KpiGridRow.propTypes = { kpi: PropTypes.object.isRequired };
+
+// Per-section rollup, derived from display_state — the SAME derivation the Top strip's
+// rollup uses, so the two can never disagree about how many KPIs breached.
+const SectionRollup = ({ rows }) => {
+  const counts = rows.reduce((acc, r) => {
+    const { state } = kpiDisplayState(r);
+    acc[state] = (acc[state] || 0) + 1;
+    return acc;
+  }, {});
+  const parts = [
+    ['breached', '▲', 'breached'],
+    ['at_risk', '◆', 'at risk'],
+    ['passed', '●', 'within budget'],
+    ['observed', '○', 'observed'],
+    ['no_data', '—', 'not measured'],
+  ]
+    .filter(([key]) => counts[key])
+    .map(([key, glyph, word]) => (
+      <span className={cx('kpi-rollup-part', `state-${key}`)} key={key}>
+        <span aria-hidden="true">{glyph}</span> {counts[key]} {word}
+      </span>
+    ));
+
+  return <span className={cx('kpi-rollup')}>{parts}</span>;
+};
+SectionRollup.propTypes = { rows: PropTypes.array.isRequired };
+
 const KpisBySection = ({ sections = [] }) => {
   if (!sections.length) return null;
   return (
     <div className={cx('panel')}>
       <div className={cx('panel-head')}>
         <h3 className={cx('panel-title')}>KPIs by section</h3>
-        <span className={cx('panel-sub')}>full catalog · stat by measurement type</span>
+        <span className={cx('panel-sub')}>full catalog · every captured KPI, grouped by source</span>
       </div>
       <div className={cx('section-chips')}>
         {sections.map((s) => (
@@ -1248,25 +1477,29 @@ const KpisBySection = ({ sections = [] }) => {
           </span>
         ))}
       </div>
-      {sections.map((s) => (
-        <div className={cx('by-section')} key={s.key || s.title}>
-          <h4 className={cx('section-subtitle')}>{text(s.title)}</h4>
-          <table className={cx('table')}>
-            <tbody>
-              {(s.rows || []).map((r) => (
-                <tr key={r.key || r.display_name}>
-                  <td>{text(r.display_name || r.key)}</td>
-                  <td className={cx('num')}>{text(r.formatted_value || r.value)}</td>
-                  <td>
-                    <Badge value={r.status} />
-                  </td>
-                  <td className={cx('muted-cell')}>{text(r.measurement || r.owner || '')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+      {sections.map((s) => {
+        const rows = s.rows || [];
+        return (
+          <div className={cx('by-section')} key={s.key || s.title}>
+            <div className={cx('by-section-head')}>
+              <h4 className={cx('section-subtitle')}>{text(s.title)}</h4>
+              {rows.length > 0 && <SectionRollup rows={rows} />}
+            </div>
+            {rows.length === 0 ? (
+              // An empty body would read as "nothing wrong here". It is not the same claim.
+              <p className={cx('kpi-grid-empty')}>
+                not captured — no KPI in this group was recorded on this run
+              </p>
+            ) : (
+              <div className={cx('kpi-rows')}>
+                {rows.map((r) => (
+                  <KpiGridRow kpi={r} key={r.id || r.key || r.raw_key} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
