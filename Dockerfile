@@ -25,6 +25,15 @@ USER root
 COPY --from=build-frontend /usr/src/app/build /usr/share/nginx/html
 COPY --from=generate-build-info /usr/src/app/build /usr/share/nginx/html
 
+# FASTBREAK runtime overlay. brand.js sets window.FASTBREAK_API_URL (the
+# Observability tab's live-KPIs backend), favicon and title; brand-auth.js is the
+# credential-free login-page branding. These lived only INSIDE the fb35 image
+# before (injected post-build, never committed) — a rebuild silently dropped them
+# and the tab honestly fell back to tagged sample data. Baked into the build now
+# so every image is reproducible from the repo.
+COPY brand.js brand-auth.js /usr/share/nginx/html/
+RUN sed -i 's#</head>#<script src="brand-auth.js"></script><script defer src="brand.js"></script></head>#' /usr/share/nginx/html/index.html
+
 RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/nginx.conf
 
