@@ -650,36 +650,64 @@ ArtifactsEvidence.propTypes = {
   section: PropTypes.object.isRequired,
 };
 
+// History / Regression: this test's Top KPIs vs the SAME test in prior runs.
+// Direction-aware verdicts arrive from the API (rising rebuffer = regression,
+// rising bitrate = improvement); 'no_data' renders muted — never a fabricated 0.
 const HistoryRegression = ({ section }) => {
-  const rows = section.data?.rows || section.data?.history || [];
+  const data = section.data || {};
+  const rows = data.rows || [];
+  const builds = data.builds || {};
+
+  // Δ column: sign-carrying percent, or an honest "—" when there is no relative scale.
+  const fmtDelta = (deltaPct) => {
+    if (deltaPct === null || deltaPct === undefined) {
+      return '—';
+    }
+    return `${deltaPct > 0 ? '+' : ''}${deltaPct}%`;
+  };
 
   return (
-    <table className={cx('table')}>
-      <thead>
-        <tr>
-          <th>Build</th>
-          <th>KPI</th>
-          <th>Previous</th>
-          <th>Current</th>
-          <th>Delta</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr key={`${row.build || row.current_build}-${row.kpi_key || row.display_name}`}>
-            <td>{text(row.build || row.current_build)}</td>
-            <td>{text(row.kpi_key || row.display_name)}</td>
-            <td>{text(row.previous)}</td>
-            <td>{text(row.current)}</td>
-            <td>{text(row.delta_pct || row.delta)}</td>
-            <td>
-              <Badge value={row.status} />
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className={cx('history')}>
+      {data.no_data_reason && <p className={cx('history-note')}>{text(data.no_data_reason)}</p>}
+      {data.note && <p className={cx('history-note')}>{text(data.note)}</p>}
+      {rows.length > 0 && (
+        <table className={cx('table')}>
+          <thead>
+            <tr>
+              <th>KPI</th>
+              <th>Current</th>
+              {/* With one degenerate build label the comparison is run-over-run — the
+                  header must say so rather than implying a per-build trend. */}
+              <th>{builds.degenerate ? 'Prev run' : 'Prev build'}</th>
+              <th>Prev-5 median</th>
+              <th>Δ</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.kpi_key || row.display_name}>
+                <td>{text(row.display_name || row.kpi_key)}</td>
+                <td>
+                  {fmtNum(row.current)}
+                  {row.unit ? <span className={cx('history-unit')}> {text(row.unit)}</span> : null}
+                </td>
+                <td>{fmtNum(row.previous)}</td>
+                <td>{fmtNum(row.prev5_median)}</td>
+                <td>{fmtDelta(row.delta_pct)}</td>
+                <td>
+                  {row.status === 'no_data' ? (
+                    <span className={cx('history-nodata')}>no data</span>
+                  ) : (
+                    <Badge value={row.status} />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 };
 
@@ -1170,7 +1198,13 @@ class SessionReplay extends Component {
                     </span>
                   </div>
                   <div className={cx('track-spark')}>
-                    <Sparkline series={tr.series} stall={stall} duration={duration} scrubT={cur} />
+                    <Sparkline
+                      series={tr.series}
+                      stall={stall}
+                      duration={duration}
+                      scrubT={cur}
+                      step={tr.render === 'step'}
+                    />
                   </div>
                   <div className={cx('track-stat')}>
                     <b>

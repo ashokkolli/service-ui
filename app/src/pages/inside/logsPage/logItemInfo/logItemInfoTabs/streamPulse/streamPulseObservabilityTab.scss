@@ -1233,6 +1233,22 @@ $kpi-rail: 96px;
   line-height: 1.5;
 }
 
+/* ── history / regression ───────────────────────────────────────────────── */
+.history-note {
+  margin: 0 0 8px;
+  color: var(--sp-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.history-nodata {
+  color: var(--sp-muted);
+  font-size: 12px;
+}
+.history-unit {
+  color: var(--sp-muted);
+  font-size: 11px;
+}
+
 /* ── jira-ready draft ───────────────────────────────────────────────────── */
 .jira-draft {
   margin: 0 0 8px;

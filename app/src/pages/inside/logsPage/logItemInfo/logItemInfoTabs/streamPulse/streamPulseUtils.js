@@ -3,7 +3,9 @@ export const text = (value) => (value === null || value === undefined ? '' : Str
 export const statusClass = (status) => {
   const normalized = text(status).toLowerCase();
 
-  if (['failed', 'fail', 'critical', 'error', 'high'].includes(normalized)) {
+  // 'regression' is History/Regression's direction-aware verdict: the KPI moved the
+  // BAD way for its own direction (rising rebuffer). It must read as a failure.
+  if (['failed', 'fail', 'critical', 'error', 'high', 'regression'].includes(normalized)) {
     return 'failed';
   }
 
@@ -15,7 +17,11 @@ export const statusClass = (status) => {
   // explicitly recognise as pass/warn/fail falls to a NEUTRAL 'info' badge — never
   // green. Otherwise an 'unknown'/'no data' section or a diagnostic rca_category
   // label (e.g. 'network_cdn_degradation') would render as a reassuring green pass.
-  if (['passed', 'pass', 'passing', 'success', 'ok', 'healthy', 'low'].includes(normalized)) {
+  if (
+    ['passed', 'pass', 'passing', 'success', 'ok', 'healthy', 'low', 'improvement'].includes(
+      normalized,
+    )
+  ) {
     return 'passed';
   }
 
@@ -207,7 +213,9 @@ export const hasSectionContent = (section = {}) => {
   }
 
   if (section.type === 'history') {
-    return Boolean((data.rows || data.history || []).length);
+    // A history payload with no rows but an explicit no_data_reason must still
+    // render — the honest "why there is no history" beats a silently absent panel.
+    return Boolean((data.rows || data.history || []).length || data.no_data_reason);
   }
 
   if (section.type === 'app_health') {

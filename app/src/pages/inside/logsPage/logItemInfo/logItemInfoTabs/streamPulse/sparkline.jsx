@@ -27,7 +27,7 @@ const sampleAt = (series, tMs) => {
   return v;
 };
 
-export const Sparkline = ({ series, stall, duration, scrubT }) => {
+export const Sparkline = ({ series, stall, duration, scrubT, step }) => {
   if (!series || series.length < 2) {
     return <span className="sp-spark-empty">—</span>;
   }
@@ -42,9 +42,21 @@ export const Sparkline = ({ series, stall, duration, scrubT }) => {
   const x = (t) => ((t - t0) / span) * (W - 2) + 1;
   const y = (v) => H - 3 - ((v - vMin) / vSpan) * (H - 6);
 
-  const d = series
-    .map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`)
-    .join(' ');
+  // Two path shapes. `step` renders a STEP FUNCTION: each value holds until the next
+  // real report (H then V) — for event-cadence player telemetry (ABR bitrate, buffered
+  // ms, player state), where a sloped line would invent values the player never
+  // reported. Default remains the linear polyline for genuinely-sampled series.
+  const d = step
+    ? series
+        .map((p, i) =>
+          i
+            ? `H${x(p.t).toFixed(1)} V${y(p.v).toFixed(1)}`
+            : `M${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`,
+        )
+        .join(' ') + ` H${x(t1).toFixed(1)}`
+    : series
+        .map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`)
+        .join(' ');
   const area = `${d} L${x(t1).toFixed(1)},${H} L${x(t0).toFixed(1)},${H} Z`;
 
   const dur = duration || t1;
@@ -86,5 +98,6 @@ Sparkline.propTypes = {
   stall: PropTypes.shape({ start_ms: PropTypes.number, end_ms: PropTypes.number }),
   duration: PropTypes.number,
   scrubT: PropTypes.number,
+  step: PropTypes.bool,
 };
-Sparkline.defaultProps = { series: [], stall: null, duration: 0, scrubT: null };
+Sparkline.defaultProps = { series: [], stall: null, duration: 0, scrubT: null, step: false };
