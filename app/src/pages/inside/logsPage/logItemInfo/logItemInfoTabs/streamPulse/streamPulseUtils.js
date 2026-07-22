@@ -66,6 +66,18 @@ const KPI_STATE_FALLBACK = {
   not_measured: { state: 'no_data', glyph: '—', label: 'Not measured' },
   not_captured: { state: 'no_data', glyph: '—', label: 'Not measured' },
   missing: { state: 'no_data', glyph: '—', label: 'Not measured' },
+  // MEASURED, BUT NOT JUDGED HERE. A KPI whose budget belongs to a different
+  // scenario -- e.g. an ad-impression budget on the Home-tab test, where no ad
+  // playback occurs. The value is REAL and is still shown; only the verdict is
+  // withheld, and the backend deliberately omits the threshold so no meter can
+  // be drawn for a budget it refuses to apply.
+  //
+  // This entry is load-bearing: `kpiDisplayState` below gates on
+  // KPI_STATE_FALLBACK[display_state] BEFORE trusting the backend, so without a
+  // key here an 'out_of_scope' KPI falls through to the observed branch and
+  // renders "No budget defined" -- a false statement about a KPI that HAS a
+  // budget. Deleting this line reintroduces that lie.
+  out_of_scope: { state: 'out_of_scope', glyph: '◇', label: 'Not judged here' },
 };
 
 const KPI_STATE_OBSERVED = { state: 'observed', glyph: '○', label: 'Observed' };
@@ -225,6 +237,191 @@ export const hasSectionContent = (section = {}) => {
   }
 
   return Boolean(Object.keys(data).length);
+};
+
+// ── RCA panel ──────────────────────────────────────────────────────────────
+// The panel reconciles TWO independent classifiers that can disagree, so neither
+// may be rendered as "the" confidence without naming which engine produced it:
+//
+//   rules      nba-automation/observability/rca_rules.py publishes the insight the
+//              payload's `category` / `confidence` / `suggested_owner` come from.
+//   signatures streampulse fastbreak/rca_grounding.py produces `grounded` — the
+//              deterministic signature library, with signatures_evaluated and an
+//              evidence_hash.
+//
+// They really do disagree in live data: session 142920 carries PLAYBACK_BLACK_SCREEN
+// at 0.9 from the rules engine while `grounded` is UNCLASSIFIED at 0.0.
+//
+// BOTH engines emit 0.0 as their NO-BASIS value when nothing matched. Rendering that
+// as "0%" asserts a measurement nobody made, so `confidence` is null in every
+// unmatched state and the caller must print a reason instead — never a number.
+const RCA_NO_VERDICT = ['', 'NONE', 'UNKNOWN', 'UNCLASSIFIED'];
+
+// 'NONE' is the API schema default and 'UNKNOWN' the column default; both mean
+// "never classified". Neither is a category, so neither may render as one.
+export const isRcaNoVerdict = (category) =>
+  RCA_NO_VERDICT.includes(text(category).trim().toUpperCase());
+
+export const RCA_CLASSIFIER_RULES = 'deterministic KPI rules (observability/rca_rules.py)';
+export const RCA_CLASSIFIER_SIGNATURES = 'signature library (fastbreak/rca_grounding.py)';
+
+// FOUR states:
+//   matched            an engine returned a category AND earned a confidence
+//   nothing_to_explain no KPI breached, so no question was asked
+//   degraded           `grounded` is absent: classify_session raised, and we cannot
+//                      tell "matched" from "no match" — we must say so
+//   unmatched          the library ran over real breaches and nothing matched
+export const rcaVerdict = (data = {}, breachCount = 0) => {
+  const grounded = data.grounded || null;
+  const groundedMatched = Boolean(
+    grounded &&
+      grounded.signature_id !== null &&
+      grounded.signature_id !== undefined &&
+      !isRcaNoVerdict(grounded.category),
+  );
+  // The rules engine only counts as matched when it ALSO earned a confidence: its
+  // unmatched branch returns category UNCLASSIFIED with a hardcoded 0.0.
+  const rulesMatched = !isRcaNoVerdict(data.category) && Number(data.confidence) > 0;
+
+  let state = 'unmatched';
+  if (groundedMatched || rulesMatched) {
+    state = 'matched';
+  } else if (breachCount === 0) {
+    state = 'nothing_to_explain';
+  } else if (!grounded) {
+    state = 'degraded';
+  }
+
+  const evaluated = grounded ? Number(grounded.signatures_evaluated) : NaN;
+  const verdict = {
+    state,
+    category: '',
+    confidence: null,
+    classifier: '',
+    owner: '',
+    ownerRouted: false,
+    signaturesEvaluated: Number.isFinite(evaluated) ? evaluated : null,
+    evidenceHash: text(grounded && grounded.evidence_hash),
+    // true  — the signature library independently reached the same verdict
+    // false — it ran and did NOT corroborate the rules engine
+    // null  — it did not run, so corroboration is unknown (never "disproved")
+    corroborated: null,
+  };
+
+  if (groundedMatched) {
+    verdict.category = text(grounded.category);
+    verdict.confidence = Number(grounded.confidence);
+    verdict.classifier = `${RCA_CLASSIFIER_SIGNATURES} · signature #${grounded.signature_id}`;
+    verdict.owner = text(grounded.owner_team);
+    verdict.corroborated = true;
+  } else if (rulesMatched) {
+    verdict.category = text(data.category);
+    verdict.confidence = Number(data.confidence);
+    verdict.classifier = RCA_CLASSIFIER_RULES;
+    verdict.owner = text(data.suggested_owner);
+    verdict.corroborated = grounded ? false : null;
+  }
+
+  verdict.ownerRouted = Boolean(verdict.owner) && verdict.owner.toLowerCase() !== 'unassigned';
+  return verdict;
+};
+
+// A payload string still carrying a serialized Python/JS object. We do NOT prettify
+// such a string: a frontend that papers over a fabricating emitter hides the defect
+// from every downstream reader of the same field.
+export const containsSerializedDict = (value) => /\{\s*['"][a-z_]+['"]\s*:/i.test(text(value));
+
+export const medianMs = (sortedAsc = []) => {
+  if (!sortedAsc.length) {
+    return null;
+  }
+
+  const mid = Math.floor(sortedAsc.length / 2);
+
+  return sortedAsc.length % 2
+    ? sortedAsc[mid]
+    : Math.round((sortedAsc[mid - 1] + sortedAsc[mid]) / 2);
+};
+
+// Twenty flat rows where ten are the SAME endpoint reads as ten unrelated problems.
+// Group by (type, host, path) so repetition becomes the headline. Pure derivation over
+// rows the API measured — an empty input yields an empty list, never a zero row.
+export const groupSlowRequests = (rows = []) => {
+  const groups = new Map();
+
+  rows.forEach((row) => {
+    // Pre-formatted string rows (the legacy rca.evidence[] shape) are not groupable
+    // and are never rendered by this panel.
+    if (!row || typeof row !== 'object') {
+      return;
+    }
+
+    const host = text(row.host);
+    const path = text(row.sanitized_path || row.path || row.sanitized_url);
+    const type = text(row.request_type || row.type);
+    const id = `${type}|${host}|${path}`;
+
+    if (!groups.has(id)) {
+      groups.set(id, { id, type, host, path, durations: [], thresholds: [], codes: new Set(), firstMs: null });
+    }
+
+    const group = groups.get(id);
+    const duration = Number(row.duration_ms);
+    const threshold = Number(row.threshold_ms);
+    const start = Number(row.start_ms);
+
+    if (Number.isFinite(duration)) {
+      group.durations.push(duration);
+    }
+    if (Number.isFinite(threshold)) {
+      group.thresholds.push(threshold);
+    }
+    if (row.status_code !== null && row.status_code !== undefined) {
+      group.codes.add(String(row.status_code));
+    }
+    if (Number.isFinite(start) && (group.firstMs === null || start < group.firstMs)) {
+      group.firstMs = start;
+    }
+  });
+
+  return Array.from(groups.values())
+    .map((group) => {
+      const sorted = group.durations.slice().sort((a, b) => a - b);
+
+      return {
+        id: group.id,
+        type: group.type,
+        host: group.host,
+        path: group.path,
+        hits: group.durations.length,
+        medianMs: medianMs(sorted),
+        worstMs: sorted.length ? sorted[sorted.length - 1] : null,
+        // min: the tightest threshold any row in the group was judged against.
+        thresholdMs: group.thresholds.length ? Math.min(...group.thresholds) : null,
+        statusCodes: Array.from(group.codes).sort(),
+        firstMs: group.firstMs,
+      };
+    })
+    .sort((a, b) => b.hits - a.hits || (b.worstMs || 0) - (a.worstMs || 0));
+};
+
+// Roll-up by host so "identity.nba.com accounts for 11 of 20" is stateable.
+export const topHostShare = (groups = []) => {
+  const byHost = new Map();
+  let total = 0;
+
+  groups.forEach((group) => {
+    byHost.set(group.host, (byHost.get(group.host) || 0) + group.hits);
+    total += group.hits;
+  });
+
+  const ranked = Array.from(byHost.entries()).sort((a, b) => b[1] - a[1]);
+
+  if (!ranked.length || !total) {
+    return null;
+  }
+
+  return { host: ranked[0][0], hits: ranked[0][1], total, hostCount: ranked.length };
 };
 
 export const shouldAutoExpandSection = (section = {}) => {

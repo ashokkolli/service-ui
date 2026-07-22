@@ -344,6 +344,12 @@ details[open] > .card-head .chev {
   &.state-observed::before {
     background: var(--sp-faint);
   }
+  /* Not judged here: the value IS measured, so this is NOT the hatched no_data
+     treatment. It carries a neutral stripe like `observed` -- the distinction the
+     reader needs is "no verdict", not "no data", and the glyph + label say which. */
+  &.state-out_of_scope::before {
+    background: var(--sp-faint);
+  }
 
   /* Not measured: dashed border, hatched fill, no stripe, no shadow. An absence must be
      structurally impossible to confuse with a real measured 0. */
@@ -427,7 +433,8 @@ details[open] > .card-head .chev {
     color: var(--sp-ok);
   }
   &.state-observed,
-  &.state-no_data {
+  &.state-no_data,
+  &.state-out_of_scope {
     color: var(--sp-faint);
   }
 }
@@ -887,6 +894,205 @@ details[open] > .card-head .chev {
   color: var(--sp-faint);
 }
 
+/* ── across-run KPI trend (§3b) ──────────────────────────────────────────────
+   One accent for the series, --sp-crit ONLY on a measured breach, and a NEUTRAL
+   budget rule reusing the .kpi-meter-tick treatment (ink @ .55) — a budget is
+   read-only context, not a verdict, so it is never red. --sp-faint is banned for
+   readable copy in this block: it measures 2.2-3.0:1 and fails AA in both themes,
+   so every note/legend/readout uses --sp-muted. No new palette entries. */
+.sp-trend {
+  margin-top: 2px;
+}
+.sp-trend-svg {
+  display: block;
+  overflow: visible;
+}
+.sp-trend-axis {
+  stroke: var(--sp-line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.sp-trend-line {
+  fill: none;
+  stroke: var(--sp-accent);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+.sp-trend-dot {
+  fill: var(--sp-accent);
+  stroke: var(--sp-surface);
+  stroke-width: 1;
+  &.state-breached {
+    fill: var(--sp-crit);
+  }
+  &.state-at_risk {
+    fill: var(--sp-warn);
+  }
+  /* Measured but unjudged: neutral, never green. */
+  &.state-observed,
+  &.state-out_of_scope {
+    fill: var(--sp-muted);
+  }
+}
+.sp-trend-breach-glyph {
+  fill: var(--sp-crit);
+  font-size: 9px;
+}
+/* Gap slot: the SAME -45deg hatch as .kpi-tile.state-no_data, so "not measured"
+   reads identically wherever it appears on this tab. */
+.sp-trend-gap-bg {
+  fill: transparent;
+}
+.sp-trend-gap-hatch {
+  stroke: color-mix(in srgb, var(--sp-line) 75%, transparent);
+  stroke-width: 2;
+}
+.sp-trend-gap {
+  stroke: color-mix(in srgb, var(--sp-line) 80%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.sp-trend-budget {
+  stroke: var(--sp-ink);
+  opacity: 0.55;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.sp-trend-budget-label,
+.sp-trend-ylabel,
+.sp-trend-tick,
+.sp-trend-xlabel,
+.sp-trend-current-label {
+  fill: var(--sp-muted);
+  font-family: var(--sp-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+.sp-trend-tick {
+  &.gap {
+    fill: var(--sp-muted);
+  }
+  &.failed {
+    fill: var(--sp-crit);
+  }
+}
+.sp-trend-current {
+  stroke: var(--sp-accent);
+  stroke-width: 1;
+  opacity: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+.sp-trend-current-label {
+  fill: var(--sp-accent);
+}
+/* The accessible equivalent of the SVG. role="img" prunes the chart's subtree, so
+   this table — not focusable points inside it — is what a screen reader reads. */
+.sp-trend-a11y {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.sp-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+  color: var(--sp-muted);
+  font-size: 11px;
+}
+.sp-trend-readout {
+  margin-top: 4px;
+  color: var(--sp-muted);
+  font-family: var(--sp-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.sp-trend-note {
+  margin: 8px 0 0;
+  color: var(--sp-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.sp-trend-note-p {
+  margin: 0;
+}
+.sp-trend-gap-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  li {
+    margin-bottom: 2px;
+  }
+}
+.sp-trend-chip {
+  cursor: pointer;
+  color: inherit;
+  &.on {
+    border-color: color-mix(in srgb, var(--sp-accent) 60%, var(--sp-line));
+    background: var(--sp-accent-soft);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--sp-accent);
+    outline-offset: 2px;
+  }
+}
+.sp-trend-window {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.sp-trend-window-opt {
+  padding: 3px 8px;
+  border: 1px solid var(--sp-line);
+  border-radius: 6px;
+  background: var(--sp-surface-2);
+  color: var(--sp-muted);
+  font-size: 11px;
+  cursor: pointer;
+  &.on {
+    border-color: color-mix(in srgb, var(--sp-accent) 60%, var(--sp-line));
+    background: var(--sp-accent-soft);
+    color: var(--sp-ink);
+  }
+  /* Disabled-with-reason, never silently clamped: showing 6 points under a "Last 20"
+     heading would misstate the cohort. */
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 1;
+    border-style: dashed;
+    color: var(--sp-muted);
+    background: transparent;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--sp-accent);
+    outline-offset: 2px;
+  }
+}
+.kpi-tile-trend {
+  margin-top: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--sp-accent);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  &:focus-visible {
+    outline: 2px solid var(--sp-accent);
+    outline-offset: 2px;
+  }
+}
+.kpi-tile-trend-n {
+  color: var(--sp-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── KPIs by section (§5) ───────────────────────────────────────────────── */
 .section-chips {
   display: flex;
@@ -1059,7 +1265,8 @@ $kpi-rail: 96px;
     color: var(--sp-ok);
   }
   &.state-observed,
-  &.state-no_data {
+  &.state-no_data,
+  &.state-out_of_scope {
     color: var(--sp-faint);
   }
 }
@@ -1153,27 +1360,6 @@ $kpi-rail: 96px;
 }
 
 /* ── RCA content ────────────────────────────────────────────────────────── */
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.summary-grid div {
-  padding: 10px;
-  border: 1px solid var(--sp-line);
-  border-radius: 8px;
-  background: var(--sp-surface-2);
-}
-.summary-grid span {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--sp-muted);
-  font-size: 12px;
-}
-.summary-grid b {
-  font-family: $FONT-SEMIBOLD;
-}
 .section-subtitle {
   margin: 12px 0 6px;
   font-family: $FONT-SEMIBOLD;
@@ -1196,9 +1382,321 @@ $kpi-rail: 96px;
   font-size: 12px;
   font-family: var(--sp-mono);
 }
-.rca p {
-  margin: 8px 0;
+/* NB: the old blanket `.rca p` rule is gone. Its element-plus-class specificity
+   (0,1,1) outranked every single-class rule below, so it silently overrode the
+   panel's own margins and line-heights. Each paragraph now carries its own class. */
+
+/* ── RCA panel ──────────────────────────────────────────────────────────────
+   Tokens only — no new palette, everything below is a --sp-* already declared above.
+
+   ONE ACCENT: --sp-crit, used in exactly three rules, all of them a MEASURED breach
+   (.rca-verdict-cell.state-breached::before, .rca-state.state-breached,
+   .rca-delta-breached). Diagnosis, evidence, reasoning and owner stay neutral —
+   a missing diagnosis is not an alarm. --sp-accent keeps its tab-wide job: focus.
+
+   NO READABLE COPY IN --sp-faint (measured ~2.3:1 light / 3.0:1 dark — both below
+   AA 4.5:1). Labels and values use --sp-muted or --sp-ink; --sp-faint is not used here.
+
+   HIERARCHY, four levels, monotonically decreasing:
+     L1 .rca-verdict-headline      18px   semibold  ink
+     L2 .rca-block-title           11.5px uppercase muted
+     L3 .rca-table                 12px   ink / mono tabular numerics
+     L4 .rca-prose, .rca-block-note 11.5-12px muted, inside a collapsed <details>
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* neutral count chip in the card header — replaces the red CRITICAL badge */
+.rca-head-chip {
+  padding: 2px 9px;
+  border: 1px solid var(--sp-line);
+  border-radius: 999px;
+  background: var(--sp-surface-2);
+  color: var(--sp-muted);
+  font-family: $FONT-SEMIBOLD;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* L1 — two facts, never fused */
+.rca-verdict {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.rca-verdict-cell {
+  position: relative;
+  padding: 12px 14px 12px 16px;
+  border: 1px solid var(--sp-line);
+  border-radius: 10px;
+  background: var(--sp-surface-2);
+}
+.rca-verdict-cell::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--sp-line); /* decoration — never the sole signal */
+}
+/* THE ONE ACCENT — a measured breach, and only that. */
+.rca-verdict-cell.state-breached::before {
+  background: var(--sp-crit);
+}
+/* The diagnosis cell is neutral in EVERY state. */
+.rca-verdict-cell.rca-verdict-cell--neutral::before {
+  background: var(--sp-line);
+}
+.rca-verdict-label {
+  color: var(--sp-muted);
+  font-family: $FONT-SEMIBOLD;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.rca-verdict-headline {
+  margin-top: 5px;
+  color: var(--sp-ink);
+  font-family: $FONT-SEMIBOLD;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  /* Deliberately NOT tinted by state: the glyph and the word carry the meaning and
+     the 3px rule carries the colour. Tinting here too would re-create the alarm. */
+}
+.rca-verdict-glyph {
+  margin-right: 6px;
+  color: var(--sp-crit);
+  font-size: 13px;
+  line-height: 1;
+}
+.rca-verdict-aside {
+  color: var(--sp-muted);
+  font-family: $FONT-REGULAR;
+  font-size: 14px;
+}
+.rca-verdict-note {
+  max-width: 62ch;
+  margin: 7px 0 0;
+  color: var(--sp-muted);
+  font-size: 12px;
   line-height: 1.5;
+}
+
+/* L1b — meta strip: confidence / owner / classifier / hash, out of the headline */
+.rca-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin: 0 0 4px;
+  padding: 10px 2px 14px;
+  border-bottom: 1px solid var(--sp-line-2);
+}
+.rca-meta-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+.rca-meta-item dt {
+  color: var(--sp-muted);
+  font-family: $FONT-SEMIBOLD;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.rca-meta-item dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--sp-ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* "Not computed — no rule or signature matched" and friends. Muted + italic, never a
+   number: this is the replacement for the old flat "Confidence 0%". */
+.rca-meta-absent {
+  color: var(--sp-muted);
+  font-style: italic;
+}
+
+/* L2 — blocks */
+.rca-block {
+  padding: 14px 0 2px;
+  border-top: 1px solid var(--sp-line-2);
+}
+.rca-block:first-of-type {
+  border-top: 0;
+}
+.rca-block-title {
+  margin: 0 0 8px;
+  color: var(--sp-muted);
+  font-family: $FONT-SEMIBOLD;
+  font-size: 11.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.rca-lede {
+  max-width: 78ch;
+  margin: 0 0 10px;
+  color: var(--sp-ink);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.rca-lede b {
+  font-family: var(--sp-mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+.rca-block-note {
+  max-width: 78ch;
+  margin: 8px 0 0;
+  color: var(--sp-muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+/* L3 — tables. Numerics are mono + tabular so columns align down the page. */
+.rca-table-wrap {
+  overflow-x: auto; /* the RP log panel gets narrow; never clip a budget */
+}
+.rca-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.rca-table th,
+.rca-table td {
+  padding: 7px 10px 7px 0;
+  border-top: 1px solid var(--sp-line-2);
+  text-align: left;
+  vertical-align: top;
+}
+.rca-table thead th {
+  padding-top: 0;
+  border-top: 0;
+  border-bottom: 1px solid var(--sp-line);
+  color: var(--sp-muted);
+  font-family: $FONT-SEMIBOLD;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.rca-num {
+  font-family: var(--sp-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.rca-num-strong {
+  font-weight: 700;
+}
+.rca-table-kpi {
+  padding-right: 18px;
+  font-weight: 400;
+}
+.rca-table-kpi-name {
+  display: block;
+  color: var(--sp-ink);
+  font-family: $FONT-SEMIBOLD;
+}
+.rca-table-kpi-key {
+  display: block;
+  margin-top: 2px;
+  color: var(--sp-muted);
+  font-family: var(--sp-mono);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+/* an absent cell reads as absent — never as a zero */
+.rca-absent {
+  color: var(--sp-muted);
+  font-family: $FONT-REGULAR;
+  font-style: italic;
+}
+/* ACCENT 2 of 3 */
+.rca-delta-breached {
+  color: var(--sp-crit);
+}
+.rca-state {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--sp-muted);
+  font-family: $FONT-SEMIBOLD;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+/* ACCENT 3 of 3 — always accompanied by the glyph AND the word (WCAG 1.4.1) */
+.rca-state.state-breached {
+  color: var(--sp-crit);
+}
+.rca-state.state-at_risk,
+.rca-state.state-passed,
+.rca-state.state-observed,
+.rca-state.state-no_data {
+  color: var(--sp-muted);
+}
+.rca-state-glyph {
+  font-size: 9px;
+  line-height: 1;
+}
+
+/* disclosure — native <details>, keyboard toggle + focus for free */
+.rca-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+}
+.rca-fold > summary::-webkit-details-marker {
+  display: none;
+}
+.rca-fold > summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 1.6px solid var(--sp-muted);
+  border-bottom: 1.6px solid var(--sp-muted);
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 0.15s;
+}
+.rca-fold[open] > summary::after {
+  transform: rotate(225deg) translateY(-1px);
+}
+.rca-fold > summary:focus-visible {
+  outline: 2px solid var(--sp-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.rca-fold-more {
+  margin-top: 10px;
+  color: var(--sp-muted);
+  font-family: $FONT-SEMIBOLD;
+  font-size: 11.5px;
+}
+.rca-fold-body {
+  padding-top: 10px;
+}
+
+/* L4 — reasoning prose: the quietest thing in the panel, folded away by default */
+.rca-prose {
+  max-width: 78ch;
+  margin: 0;
+  color: var(--sp-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rca-fold > summary::after {
+    transition: none;
+  }
 }
 
 /* ── app-health ─────────────────────────────────────────────────────────── */

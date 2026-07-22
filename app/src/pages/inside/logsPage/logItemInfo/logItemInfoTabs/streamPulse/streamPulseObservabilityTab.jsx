@@ -10,19 +10,25 @@ import {
   rerunFailed,
 } from './streamPulseClient';
 import {
+  containsSerializedDict,
   crashFreePercent,
+  groupSlowRequests,
   hasSectionContent,
   isHttpUri,
+  isRcaNoVerdict,
   isWarningOrFail,
   kpiDisplayName,
   kpiDisplayState,
   percent,
+  rcaVerdict,
   severityGlyph,
   shouldAutoExpandSection,
   statusClass,
   text,
+  topHostShare,
 } from './streamPulseUtils';
 import { Sparkline } from './sparkline';
+import { KpiTrendChart, isMeasured } from './kpiTrendChart';
 import styles from './streamPulseObservabilityTab.scss';
 
 const cx = classNames.bind(styles);
@@ -425,119 +431,9 @@ ListBlock.propTypes = {
   renderItem: PropTypes.func,
 };
 
-const AiRcaInsights = ({
-  section,
-  rpItemId = null,
-  functionalStatus = '',
-  actionsDisabled = false,
-  actionsDisabledReason = '',
-}) => {
-  const data = section.data || {};
-  const slowEvidence = data.slow_url_api_cdn_evidence || data.slow_requests || data.evidence || [];
-  const timeline = data.timeline_correlation || data.timeline || data.correlations || [];
-  const relatedKpis = data.related_kpis || data.kpis || [];
-  const actions = data.recommended_action || data.suggested_actions || [];
-
-  return (
-    <div className={cx('rca')}>
-      <div className={cx('summary-grid')}>
-        <div>
-          <span>Category</span>
-          <b>{text(data.category || section.status)}</b>
-        </div>
-        <div>
-          <span>Confidence</span>
-          <b>{percent(data.confidence)}</b>
-        </div>
-        <div>
-          <span>Impact</span>
-          <b>{text(data.impact)}</b>
-        </div>
-        <div>
-          <span>Owner</span>
-          <b>{text(data.suggested_owner)}</b>
-        </div>
-      </div>
-      {data.summary && <p>{text(data.summary)}</p>}
-      {data.reasoning && (
-        <Fragment>
-          <h4 className={cx('section-subtitle')}>Detailed reasoning</h4>
-          <p>{text(data.reasoning)}</p>
-        </Fragment>
-      )}
-      <ListBlock
-        title="Slow API / URL / CDN evidence"
-        items={slowEvidence}
-        renderItem={(item) =>
-          typeof item === 'string'
-            ? text(item)
-            : `${text(item.host || item.sanitized_url)} ${text(item.sanitized_path)} ${text(
-                item.duration_ms,
-              )}ms - ${text(item.impact)}`
-        }
-      />
-      <ListBlock
-        title="Timeline correlation"
-        items={timeline}
-        renderItem={(item) =>
-          typeof item === 'string'
-            ? text(item)
-            : `${text(item.timestamp_ms || item.start_ms)}ms - ${text(
-                item.event || item.description || item.type,
-              )}`
-        }
-      />
-      <ListBlock
-        title="Related KPIs"
-        items={relatedKpis}
-        renderItem={(item) =>
-          typeof item === 'string' ? (
-            text(item)
-          ) : (
-            <Fragment>
-              {text(item.display_name || item.key)} <Badge value={item.status} />
-            </Fragment>
-          )
-        }
-      />
-      <ListBlock title="Recommended action" items={Array.isArray(actions) ? actions : [actions]} />
-      {data.jira_ready && (
-        <Fragment>
-          <h4 className={cx('section-subtitle')}>Jira-ready draft</h4>
-          <dl className={cx('jira-draft')}>
-            {data.jira_ready.summary && (
-              <Fragment>
-                <dt>Summary</dt>
-                <dd>{text(data.jira_ready.summary)}</dd>
-              </Fragment>
-            )}
-            {data.jira_ready.description && (
-              <Fragment>
-                <dt>Description</dt>
-                <dd>{text(data.jira_ready.description)}</dd>
-              </Fragment>
-            )}
-          </dl>
-        </Fragment>
-      )}
-      <RcaActions
-        rpItemId={rpItemId}
-        jiraReady={data.jira_ready}
-        functionalStatus={functionalStatus}
-        disabled={actionsDisabled}
-        disabledReason={actionsDisabledReason}
-      />
-    </div>
-  );
-};
-
-AiRcaInsights.propTypes = {
-  section: PropTypes.object.isRequired,
-  rpItemId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
-  functionalStatus: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
-  actionsDisabled: PropTypes.bool,
-  actionsDisabledReason: PropTypes.string,
-};
+// AiRcaInsights is declared further down (after KpiBudgetMeter, whose threshold
+// formatting it reuses). Both call sites — SectionBody and the tab's own render —
+// resolve the binding at RENDER time, so the later declaration is safe.
 
 const NetworkIntelligence = ({ section }) => {
   const data = section.data || {};
@@ -784,6 +680,7 @@ const SectionBody = ({
   functionalStatus = '',
   actionsDisabled = false,
   actionsDisabledReason = '',
+  networkStatus = '',
 }) => {
   if (section.type === 'summary') {
     return <PerformanceSessionSummary section={section} />;
@@ -796,6 +693,7 @@ const SectionBody = ({
         functionalStatus={functionalStatus}
         actionsDisabled={actionsDisabled}
         actionsDisabledReason={actionsDisabledReason}
+        networkStatus={networkStatus}
       />
     );
   }
@@ -824,6 +722,7 @@ SectionBody.propTypes = {
   functionalStatus: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   actionsDisabled: PropTypes.bool,
   actionsDisabledReason: PropTypes.string,
+  networkStatus: PropTypes.string,
 };
 
 export const KpiAccordionSection = ({
@@ -979,6 +878,582 @@ const KpiBudgetMeter = ({ view }) => {
 
 KpiBudgetMeter.propTypes = { view: PropTypes.object.isRequired };
 
+// ── AI RCA & Insights ────────────────────────────────────────────────────────
+// PANEL CONTRACT — do not relax without a design review.
+//  1. NEVER interpolate a dict-shaped payload field (kpi.threshold, jira_ready, …)
+//     into prose or a template literal. The API serves threshold as {budget, direction};
+//     a template literal prints "{'budget': 3000, 'direction': 'max'}" at a human.
+//     Budgets render ONLY as columns of <RcaBudgetTable/>.
+//  2. Confidence renders ONLY when an engine actually matched, and is always labelled
+//     with WHICH engine produced it — the rules engine and the signature library
+//     disagree in live data. Both unmatched branches emit a no-basis 0.0; printing
+//     that as "0%" asserts a measurement nobody made.
+//  3. ONE accent in this panel: --sp-crit, and only on a MEASURED breach (severity
+//     cell, budget-table State/Delta). Diagnosis, evidence, reasoning and owner stay
+//     neutral — a missing diagnosis is not an alarm.
+//  4. Colour is never the only signal: glyph + word accompany every state.
+//  5. No readable copy in --sp-faint (2.2–3.0:1 measured, both themes fail AA).
+// Display-only: nothing here gates anything.
+const rcaDiagnosisCopy = (verdict) => {
+  if (verdict.state === 'matched') {
+    return {
+      headline: verdict.category,
+      note:
+        `Matched by the ${verdict.classifier}. A match identifies WHERE to look from ` +
+        'measured evidence; it is not proof of the underlying cause, and it never gates the run.',
+    };
+  }
+
+  if (verdict.state === 'nothing_to_explain') {
+    return {
+      headline: 'Nothing to diagnose',
+      note:
+        'No KPI breached on this run, so no root-cause analysis was attempted. Confidence and ' +
+        'owner are not shown because no question was asked.',
+    };
+  }
+
+  if (verdict.state === 'degraded') {
+    return {
+      headline: 'Classifier did not run',
+      note:
+        'The signature library could not be evaluated for this session, so no diagnosis exists — ' +
+        '“matched” and “no match” are indistinguishable here. The measured KPI breaches below are ' +
+        'unaffected and remain valid.',
+    };
+  }
+
+  const evaluated = verdict.signaturesEvaluated;
+  const counted =
+    evaluated === null
+      ? 'The signature library was evaluated against this session’s evidence; nothing matched.'
+      : `${evaluated === 1 ? '1 signature' : `${evaluated} signatures`} in this project’s library ` +
+        `${evaluated === 1 ? 'was' : 'were'} evaluated against this session’s evidence; ` +
+        'none matched.';
+
+  return {
+    headline: 'No matching signature',
+    note:
+      `${counted} That is not a fault in the run — it means no rule has been authored for this ` +
+      'pattern yet. Use the measured breaches and the endpoint evidence below to decide where to ' +
+      'look, then author a signature so the next run classifies itself.',
+  };
+};
+
+// L1. TWO facts, explicitly labelled, never fused into one verdict.
+//   left  = how bad is the MEASURED evidence (earned; carries the one accent)
+//   right = do we know WHY                   (always neutral, in every state)
+const RcaVerdictHeader = ({ verdict, breached, atRisk }) => {
+  const copy = rcaDiagnosisCopy(verdict);
+
+  return (
+    <div className={cx('rca-verdict')}>
+      <div className={cx('rca-verdict-cell', breached > 0 ? 'state-breached' : 'state-passed')}>
+        <div className={cx('rca-verdict-label')}>Severity of evidence</div>
+        <div className={cx('rca-verdict-headline')}>
+          {breached > 0 ? (
+            <Fragment>
+              <span className={cx('rca-verdict-glyph')} aria-hidden="true">
+                ▲
+              </span>
+              {breached} KPI{breached === 1 ? '' : 's'} breached
+            </Fragment>
+          ) : (
+            'No KPI breached'
+          )}
+          {atRisk > 0 && <span className={cx('rca-verdict-aside')}> · {atRisk} at risk</span>}
+        </div>
+        <p className={cx('rca-verdict-note')}>
+          {breached > 0
+            ? 'Measured against the KPI catalog’s budgets. An experience breach never rewrites the ' +
+              'functional pass/fail above.'
+            : 'Every KPI that had a budget on this run was inside it.'}
+        </p>
+      </div>
+
+      <div className={cx('rca-verdict-cell', 'rca-verdict-cell--neutral')}>
+        <div className={cx('rca-verdict-label')}>Diagnosis</div>
+        <div className={cx('rca-verdict-headline')}>{text(copy.headline)}</div>
+        <p className={cx('rca-verdict-note')}>{copy.note}</p>
+        {verdict.corroborated === false && (
+          <p className={cx('rca-verdict-note')}>
+            The signature library ran over the same evidence and did not corroborate this category,
+            so it rests on the rules engine alone — a lead to check, not a confirmed diagnosis.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};
+
+RcaVerdictHeader.propTypes = {
+  verdict: PropTypes.object.isRequired,
+  breached: PropTypes.number.isRequired,
+  atRisk: PropTypes.number.isRequired,
+};
+
+// Every absent value states WHY it is absent, in the state's own terms. None of them
+// is a number, and none of them is 0 — the payload's 0.0 is a no-basis value.
+const RCA_ABSENT_COPY = {
+  nothing_to_explain: {
+    confidence: 'Not applicable — no breach to explain',
+    owner: 'Not applicable — nothing to route',
+    classifier: 'Not attempted',
+  },
+  degraded: {
+    confidence: 'Not computed — classifier did not run',
+    owner: 'Not routed — classifier did not run',
+    classifier: 'Did not run',
+  },
+  unmatched: {
+    confidence: 'Not computed — no rule or signature matched',
+    owner: 'Not routed — no rule matched',
+    classifier: 'Nothing matched',
+  },
+};
+
+// L1b. Everything the old summary-grid gave headline weight, demoted to a strip.
+// Confidence keeps its ROW but loses its NUMBER whenever nothing matched.
+const RcaMetaStrip = ({ verdict }) => {
+  const matched = verdict.state === 'matched';
+  const absent = RCA_ABSENT_COPY[verdict.state] || RCA_ABSENT_COPY.unmatched;
+  const evaluated = verdict.signaturesEvaluated;
+  const classifier =
+    verdict.state === 'unmatched' && evaluated !== null
+      ? `${absent.classifier} · ${evaluated} signature${evaluated === 1 ? '' : 's'} evaluated`
+      : absent.classifier;
+  const items = [
+    matched
+      ? { key: 'conf', label: 'Confidence', value: percent(verdict.confidence) }
+      : { key: 'conf', label: 'Confidence', value: absent.confidence, absent: true },
+    matched && verdict.ownerRouted
+      ? { key: 'owner', label: 'Owner', value: verdict.owner }
+      : {
+          key: 'owner',
+          label: 'Owner',
+          value: matched ? 'Not routed — the matched rule assigns no owner' : absent.owner,
+          absent: true,
+        },
+    matched
+      ? { key: 'by', label: 'Classified by', value: verdict.classifier }
+      : { key: 'by', label: 'Classified by', value: classifier, absent: true },
+  ];
+
+  return (
+    <dl className={cx('rca-meta')}>
+      {items.map((item) => (
+        <div className={cx('rca-meta-item')} key={item.key}>
+          <dt>{item.label}</dt>
+          <dd className={cx({ 'rca-meta-absent': Boolean(item.absent) })}>{text(item.value)}</dd>
+        </div>
+      ))}
+      {verdict.evidenceHash && (
+        <div className={cx('rca-meta-item')} key="hash">
+          <dt>Evidence hash</dt>
+          <dd>
+            <code className={cx('artifact-code')}>{verdict.evidenceHash.slice(0, 12)}</code>
+            <button
+              type="button"
+              className={cx('copy-btn')}
+              onClick={() => copyToClipboard(verdict.evidenceHash)}
+              aria-label="Copy the full evidence hash"
+            >
+              Copy
+            </button>
+          </dd>
+        </div>
+      )}
+    </dl>
+  );
+};
+
+RcaMetaStrip.propTypes = { verdict: PropTypes.object.isRequired };
+
+// L2. Budgets as ALIGNED COLUMNS — the reason no budget dict is ever interpolated into
+// prose here. `kpi.threshold` is only ever read field-by-field, via threshold_view when
+// the payload carries one and formatThreshold() when it does not.
+const RcaBudgetTable = ({ kpis }) => {
+  if (!kpis.length) {
+    return null;
+  }
+
+  return (
+    <section className={cx('rca-block')} aria-labelledby="rca-breaches">
+      <h4 className={cx('rca-block-title')} id="rca-breaches">
+        What breached
+      </h4>
+      <div className={cx('rca-table-wrap')}>
+        <table className={cx('rca-table')}>
+          <thead>
+            <tr>
+              <th scope="col">KPI</th>
+              <th scope="col" className={cx('rca-num')}>
+                Measured
+              </th>
+              <th scope="col" className={cx('rca-num')}>
+                Budget
+              </th>
+              <th scope="col" className={cx('rca-num')}>
+                Delta
+              </th>
+              <th scope="col">State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {kpis.map((kpi) => {
+              const { state, glyph, label } = kpiDisplayState(kpi);
+              const view = kpi.threshold_view;
+              const unit = kpi.unit && kpi.unit !== 'fraction' ? ` ${text(kpi.unit)}` : '';
+              const measured = text(kpi.formatted_value) || `${fmtNum(kpi.value)}${unit}`;
+              const budget = view
+                ? `${text(view.comparator)} ${text(view.budget_text)}`
+                : formatThreshold(kpi);
+
+              return (
+                <tr key={kpi.id || kpi.key}>
+                  <th scope="row" className={cx('rca-table-kpi')}>
+                    <span className={cx('rca-table-kpi-name')}>{kpiDisplayName(kpi)}</span>
+                    <span className={cx('rca-table-kpi-key')}>{text(kpi.raw_key || kpi.key)}</span>
+                  </th>
+                  <td className={cx('rca-num')}>{measured}</td>
+                  <td className={cx('rca-num')}>
+                    {budget || <span className={cx('rca-absent')}>no budget</span>}
+                  </td>
+                  <td
+                    className={cx('rca-num', {
+                      'rca-delta-breached': Boolean(view && view.breached),
+                    })}
+                  >
+                    {view ? (
+                      text(view.delta_text)
+                    ) : (
+                      <span className={cx('rca-absent')}>not computed</span>
+                    )}
+                  </td>
+                  <td>
+                    <span className={cx('rca-state', `state-${state}`)}>
+                      <span className={cx('rca-state-glyph')} aria-hidden="true">
+                        {glyph}
+                      </span>
+                      {label}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className={cx('rca-block-note')}>
+        Budgets come from the KPI catalog. A breach here is an observation about experience — it
+        never rewrites the functional pass/fail above.
+      </p>
+    </section>
+  );
+};
+
+RcaBudgetTable.propTypes = { kpis: PropTypes.array.isRequired };
+
+const RCA_EVIDENCE_VISIBLE = 6;
+
+const RcaEvidenceRows = ({ groups }) => (
+  <table className={cx('rca-table')}>
+    <thead>
+      <tr>
+        <th scope="col">Endpoint</th>
+        <th scope="col" className={cx('rca-num')}>
+          Hits
+        </th>
+        <th scope="col" className={cx('rca-num')}>
+          Median
+        </th>
+        <th scope="col" className={cx('rca-num')}>
+          Worst
+        </th>
+        <th scope="col" className={cx('rca-num')}>
+          Threshold
+        </th>
+        <th scope="col" className={cx('rca-num')}>
+          First seen
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {groups.map((group) => (
+        <tr key={group.id}>
+          <th scope="row" className={cx('rca-table-kpi')}>
+            <span className={cx('rca-table-kpi-name')}>{group.host || 'unknown host'}</span>
+            <span className={cx('rca-table-kpi-key')}>
+              {group.path}
+              {group.type ? ` · ${group.type}` : ''}
+              {group.statusCodes.length ? ` · HTTP ${group.statusCodes.join('/')}` : ''}
+            </span>
+          </th>
+          <td className={cx('rca-num', 'rca-num-strong')}>{group.hits}</td>
+          <td className={cx('rca-num')}>{group.medianMs === null ? '—' : `${group.medianMs} ms`}</td>
+          <td className={cx('rca-num')}>{group.worstMs === null ? '—' : `${group.worstMs} ms`}</td>
+          <td className={cx('rca-num')}>
+            {group.thresholdMs === null ? '—' : `${group.thresholdMs} ms`}
+          </td>
+          <td className={cx('rca-num')}>{group.firstMs === null ? '—' : fmtClock(group.firstMs)}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
+RcaEvidenceRows.propTypes = { groups: PropTypes.array.isRequired };
+
+// L2. Grouped, so "one endpoint, ten hits" is the headline instead of ten of twenty
+// rows. Deliberately carries NO accent: an over-threshold request is a lead, not a
+// breach — the breach is the KPI, already coloured one block above.
+const RcaEvidence = ({ rows, networkStatus }) => {
+  const groups = groupSlowRequests(rows);
+
+  if (!groups.length) {
+    // Two very different situations reach here; say which one rather than claiming a
+    // clean network out of an absent measurement. An absent status is treated as "we
+    // cannot tell" — never as "nothing was slow".
+    const noCapture = ['', 'unknown'].includes(text(networkStatus).toLowerCase());
+
+    return (
+      <section className={cx('rca-block')} aria-labelledby="rca-evidence">
+        <h4 className={cx('rca-block-title')} id="rca-evidence">
+          Where to look
+        </h4>
+        <p className={cx('rca-block-note')}>
+          {noCapture
+            ? 'No network capture is attached to this session, so the network plane offers no lead. ' +
+              'This is an absence of measurement, not a clean result.'
+            : 'No request exceeded its network threshold on this session. Open Network Intelligence ' +
+              'below for the full request list.'}
+        </p>
+      </section>
+    );
+  }
+
+  const top = groups[0];
+  const totalHits = groups.reduce((sum, group) => sum + group.hits, 0);
+  const share = topHostShare(groups);
+
+  return (
+    <section className={cx('rca-block')} aria-labelledby="rca-evidence">
+      <h4 className={cx('rca-block-title')} id="rca-evidence">
+        Where to look
+      </h4>
+      <p className={cx('rca-lede')}>
+        {totalHits} request{totalHits === 1 ? '' : 's'} over threshold across {groups.length}{' '}
+        endpoint{groups.length === 1 ? '' : 's'}.{' '}
+        {top.hits > 1 ? (
+          <Fragment>
+            The most repeated is{' '}
+            <b>
+              {top.host}
+              {top.path}
+            </b>{' '}
+            — {top.hits} hits, median {top.medianMs} ms, worst {top.worstMs} ms against a{' '}
+            {top.thresholdMs} ms threshold.
+          </Fragment>
+        ) : (
+          <Fragment>
+            No endpoint repeated; the slowest is{' '}
+            <b>
+              {top.host}
+              {top.path}
+            </b>{' '}
+            at {top.worstMs} ms against a {top.thresholdMs} ms threshold.
+          </Fragment>
+        )}
+      </p>
+      {share && share.hostCount > 1 && (
+        <p className={cx('rca-block-note')}>
+          {share.host} accounts for {share.hits} of {share.total} over-threshold requests.
+        </p>
+      )}
+      <div className={cx('rca-table-wrap')}>
+        <RcaEvidenceRows groups={groups.slice(0, RCA_EVIDENCE_VISIBLE)} />
+      </div>
+      {groups.length > RCA_EVIDENCE_VISIBLE && (
+        <details className={cx('rca-fold')}>
+          <summary className={cx('rca-fold-more')}>
+            Show the remaining {groups.length - RCA_EVIDENCE_VISIBLE} endpoints
+          </summary>
+          <div className={cx('rca-table-wrap')}>
+            <RcaEvidenceRows groups={groups.slice(RCA_EVIDENCE_VISIBLE)} />
+          </div>
+        </details>
+      )}
+      <p className={cx('rca-block-note')}>
+        Grouped from {totalHits} measured requests in this session only. “Threshold” is the
+        network-intelligence threshold for the request type — not a KPI budget.
+      </p>
+    </section>
+  );
+};
+
+RcaEvidence.propTypes = {
+  rows: PropTypes.array,
+  networkStatus: PropTypes.string,
+};
+
+// L4. The prose, demoted and collapsed. If it still carries a serialized object we do
+// NOT prettify it — we name the emitter and show it raw, because a frontend that papers
+// over a fabricating backend hides the defect from everyone reading the same field.
+const RcaReasoning = ({ data }) => {
+  const prose = text(data.detailed_reasoning || data.reasoning || data.summary);
+
+  if (!prose) {
+    return null;
+  }
+
+  return (
+    <details className={cx('rca-block', 'rca-fold')}>
+      <summary className={cx('rca-block-title')}>Reasoning and provenance</summary>
+      <div className={cx('rca-fold-body')}>
+        {containsSerializedDict(prose) ? (
+          <Fragment>
+            <p className={cx('rca-block-note')}>
+              Shown raw: the emitter serialized a Python object into this text (the KPI budget is a
+              dict). Fix the emitter, not this panel — the same string is copied into the
+              Jira-ready draft below.
+            </p>
+            <pre className={cx('pre')}>{prose}</pre>
+          </Fragment>
+        ) : (
+          <p className={cx('rca-prose')}>{prose}</p>
+        )}
+        <p className={cx('rca-block-note')}>
+          Deterministic rules and signatures decide category, owner and confidence. The LLM only
+          proposes candidate signatures for human review and can never emit or gate a verdict.
+        </p>
+      </div>
+    </details>
+  );
+};
+
+RcaReasoning.propTypes = { data: PropTypes.object.isRequired };
+
+const RCA_CHIP_DIAGNOSIS = {
+  degraded: 'classifier did not run',
+  nothing_to_explain: 'nothing to diagnose',
+  unmatched: 'no matching signature',
+};
+
+// Neutral by design. The old <Badge value={rcaSection.status}/> printed a red CRITICAL
+// whose only basis is a COUNT of measured KPI breaches — beside "0% confidence" it read
+// as a diagnosis nobody made. The count says the same thing precisely, without an alarm.
+const RcaHeadChip = ({ section }) => {
+  const data = section.data || {};
+  const relatedKpis = data.related_kpis || data.kpis || [];
+  const breached = relatedKpis.filter((k) => kpiDisplayState(k).state === 'breached').length;
+  const verdict = rcaVerdict(data, breached);
+  const diagnosis =
+    verdict.state === 'matched'
+      ? text(verdict.category).toLowerCase()
+      : RCA_CHIP_DIAGNOSIS[verdict.state] || RCA_CHIP_DIAGNOSIS.unmatched;
+
+  return (
+    <span className={cx('rca-head-chip')}>
+      {breached > 0 ? `${breached} breached · ${diagnosis}` : diagnosis}
+    </span>
+  );
+};
+
+RcaHeadChip.propTypes = { section: PropTypes.object.isRequired };
+
+const AiRcaInsights = ({
+  section,
+  rpItemId = null,
+  functionalStatus = '',
+  actionsDisabled = false,
+  actionsDisabledReason = '',
+  networkStatus = '',
+}) => {
+  const data = section.data || {};
+  // STRICT source list. `data.evidence` is deliberately NOT a fallback: those are
+  // pre-formatted strings that already carry the raw threshold dict, and rendering
+  // them is how that dict reaches the screen.
+  const slowRows = data.slow_url_api_cdn_evidence || data.slow_requests || [];
+  const timeline = data.timeline_correlation || data.timeline || data.correlations || [];
+  const relatedKpis = data.related_kpis || data.kpis || [];
+  const rawActions = data.recommended_action || data.suggested_actions || [];
+  const actions = (Array.isArray(rawActions) ? rawActions : [rawActions]).filter(Boolean);
+  const breached = relatedKpis.filter((k) => kpiDisplayState(k).state === 'breached').length;
+  const atRisk = relatedKpis.filter((k) => kpiDisplayState(k).state === 'at_risk').length;
+  const verdict = rcaVerdict(data, breached);
+
+  return (
+    <div className={cx('rca')}>
+      <RcaVerdictHeader verdict={verdict} breached={breached} atRisk={atRisk} />
+      <RcaMetaStrip verdict={verdict} />
+      <RcaBudgetTable kpis={relatedKpis} />
+      <RcaEvidence rows={slowRows} networkStatus={networkStatus} />
+      {timeline.length > 0 && (
+        <div className={cx('rca-block')}>
+          <ListBlock
+            title="Timeline correlation"
+            items={timeline}
+            renderItem={(item) =>
+              typeof item === 'string'
+                ? text(item)
+                : `${text(item.timestamp_ms || item.start_ms)}ms - ${text(
+                    item.event || item.description || item.type,
+                  )}`
+            }
+          />
+        </div>
+      )}
+      <RcaReasoning data={data} />
+      {actions.length > 0 && (
+        <div className={cx('rca-block')}>
+          <ListBlock title="Standard triage checklist" items={actions} />
+          <p className={cx('rca-block-note')}>
+            The same steps are attached to every session — a checklist, not a recommendation
+            derived from this run.
+          </p>
+        </div>
+      )}
+      {data.jira_ready && (
+        <details className={cx('rca-block', 'rca-fold')}>
+          <summary className={cx('rca-block-title')}>Jira-ready draft</summary>
+          <div className={cx('rca-fold-body')}>
+            <dl className={cx('jira-draft')}>
+              {data.jira_ready.summary && (
+                <Fragment>
+                  <dt>Summary</dt>
+                  <dd>{text(data.jira_ready.summary)}</dd>
+                </Fragment>
+              )}
+              {data.jira_ready.description && (
+                <Fragment>
+                  <dt>Description</dt>
+                  <dd>{text(data.jira_ready.description)}</dd>
+                </Fragment>
+              )}
+            </dl>
+          </div>
+        </details>
+      )}
+      <RcaActions
+        rpItemId={rpItemId}
+        jiraReady={data.jira_ready}
+        functionalStatus={functionalStatus}
+        disabled={actionsDisabled}
+        disabledReason={actionsDisabledReason}
+      />
+    </div>
+  );
+};
+
+AiRcaInsights.propTypes = {
+  section: PropTypes.object.isRequired,
+  rpItemId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  functionalStatus: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  actionsDisabled: PropTypes.bool,
+  actionsDisabledReason: PropTypes.string,
+  networkStatus: PropTypes.string,
+};
+
 // Honest by construction:
 //  - `no_data` renders as an em-dash on a hatched, dashed-border card with no shadow.
 //    It can never be mistaken for a measurement, and a real measured 0 renders as a
@@ -988,7 +1463,7 @@ KpiBudgetMeter.propTypes = { view: PropTypes.object.isRequired };
 //  - Never color alone (WCAG 1.4.1): every state carries glyph + word + color.
 // Display-only. Nothing here changes pass/fail; gating lives in the test's
 // PASS_CRITERIA_ASSERTED and the KPI catalog budgets.
-const KpiTile = ({ kpi }) => {
+const KpiTile = ({ kpi, trendMeasured, onTrend }) => {
   const { state, glyph, label } = kpiDisplayState(kpi);
   const isNoData = state === 'no_data';
   const name = kpiDisplayName(kpi);
@@ -1051,13 +1526,47 @@ const KpiTile = ({ kpi }) => {
             : 'No budget defined — recorded for observation, not judged.'}
         </p>
       )}
+
+      {/* Across-run affordance. Never offer a control that leads nowhere: with fewer
+          than 2 measured runs there is nothing to chart, so this is static text, not a
+          button. `trendMeasured === null` means the payload carries no trend at all. */}
+      {trendMeasured !== null && trendMeasured >= 2 && (
+        <button
+          type="button"
+          className={cx('kpi-tile-trend')}
+          onClick={() => onTrend(kpi.raw_key || kpi.key)}
+        >
+          Trend › <span className={cx('kpi-tile-trend-n')}>{trendMeasured} runs</span>
+        </button>
+      )}
+      {trendMeasured !== null && trendMeasured < 2 && (
+        <p className={cx('kpi-tile-note')}>
+          {trendMeasured === 1
+            ? '1 run of history — not enough to trend.'
+            : 'No measured history yet — not enough to trend.'}
+        </p>
+      )}
     </div>
   );
 };
 
-KpiTile.propTypes = { kpi: PropTypes.object.isRequired };
+KpiTile.propTypes = {
+  kpi: PropTypes.object.isRequired,
+  trendMeasured: PropTypes.number,
+  onTrend: PropTypes.func,
+};
+KpiTile.defaultProps = { trendMeasured: null, onTrend: () => {} };
 
-const TopKpiGrid = ({ kpis = [] }) => {
+// Depth of across-run trend history for one KPI, or null when the payload says
+// NOTHING about it. Absence and zero are different claims and must not collapse:
+// null -> the tile stays silent; 0 -> "no measured history yet" is a real finding.
+const resolveTrendDepth = (trendDepth, key) => {
+  if (!trendDepth) return null;
+  const d = trendDepth[key];
+  return d === undefined || d === null ? null : Number(d);
+};
+
+const TopKpiGrid = ({ kpis = [], basis = '', trendDepth = null, onTrend = () => {} }) => {
   if (!kpis.length) return null;
 
   const breached = kpis.filter((k) => kpiDisplayState(k).state === 'breached').length;
@@ -1067,7 +1576,13 @@ const TopKpiGrid = ({ kpis = [] }) => {
     <div className={cx('panel')}>
       <div className={cx('panel-head')}>
         <h3 className={cx('panel-title')}>Top KPIs</h3>
-        <span className={cx('panel-sub')}>catalog-ranked · release-gate weighted</span>
+        {/* The basis is whatever the backend actually ranked by, and it says so itself
+            when it can. The old hardcoded "catalog-ranked · release-gate weighted" was
+            false in both halves on live data: the highest-ranked cards are ordered by
+            the framework-supplied attributes.priority (which short-circuits the catalog
+            table), and no release-gate weighting can apply to a project with no
+            kpi_definitions rows. */}
+        <span className={cx('panel-sub')}>{text(basis) || 'ranked by KPI priority'}</span>
         <span className={cx('kpi-rollup')}>
           {breached > 0 ? (
             <b className={cx('state-breached')}>▲ {breached} breached</b>
@@ -1079,13 +1594,216 @@ const TopKpiGrid = ({ kpis = [] }) => {
       </div>
       <div className={cx('kpi-grid')}>
         {kpis.map((kpi) => (
-          <KpiTile kpi={kpi} key={kpi.id || kpi.key} />
+          <KpiTile
+            kpi={kpi}
+            key={kpi.id || kpi.key}
+            // ABSENT IS NOT ZERO. `trendDepth` only carries keys the backend put in
+            // trend.series, so a Top-KPI missing from that block used to fall through
+            // `undefined || 0` to 0 -- and the tile then printed "No measured history
+            // yet", asserting a measured fact the payload never stated. Undefined must
+            // stay null (say nothing); a present 0 is a real, reportable zero.
+            trendMeasured={resolveTrendDepth(trendDepth, text(kpi.raw_key || kpi.key))}
+            onTrend={onTrend}
+          />
         ))}
       </div>
     </div>
   );
 };
-TopKpiGrid.propTypes = { kpis: PropTypes.array };
+TopKpiGrid.propTypes = {
+  kpis: PropTypes.array,
+  basis: PropTypes.string,
+  // key -> number of runs in the trend window that MEASURED it. null when the payload
+  // carries no across-run trend, so the tile says nothing rather than implying zero.
+  trendDepth: PropTypes.object,
+  onTrend: PropTypes.func,
+};
+
+// ── §3b KPI trend ACROSS RUNS ────────────────────────────────────────────────
+// Answers "is this KPI getting worse?" — a question the Top-KPI cards (one run) and the
+// replay sparklines (one session, video master clock) structurally cannot answer.
+//
+// This panel renders ONLY from `data.kpi_trend`, the backend block that carries one
+// point per run with an explicit `value: null` for a run that measured nothing. It is
+// deliberately NOT synthesised from `history_regression`, whose payload collapses
+// history to current / previous / prev5_median: a median is not a point in time, so
+// plotting one would fabricate a data point. No trend block => no panel.
+export const TREND_WINDOWS = [5, 10, 20];
+
+export const trendDepthByKey = (trend) => {
+  if (!trend || !Array.isArray(trend.series)) {
+    return null;
+  }
+  const out = {};
+  trend.series.forEach((s) => {
+    out[text(s.kpi_key)] = (s.points || []).filter(isMeasured).length;
+  });
+  return out;
+};
+
+class KpiTrendPanel extends Component {
+  static propTypes = {
+    trend: PropTypes.object.isRequired,
+    selectedKey: PropTypes.string,
+    onSelect: PropTypes.func,
+    headingRef: PropTypes.object,
+    currentSessionId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    hasHistorySection: PropTypes.bool,
+  };
+
+  static defaultProps = {
+    selectedKey: null,
+    onSelect: () => {},
+    headingRef: null,
+    currentSessionId: null,
+    hasHistorySection: false,
+  };
+
+  state = { windowSize: null }; // null = every run the backend returned
+
+  onChipKeyDown = (event, keys, index) => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') {
+      return;
+    }
+    event.preventDefault();
+    const next = (index + (event.key === 'ArrowRight' ? 1 : keys.length - 1)) % keys.length;
+    this.props.onSelect(keys[next]);
+  };
+
+  render() {
+    const { trend, selectedKey, onSelect, headingRef, currentSessionId, hasHistorySection } = this.props;
+    const runs = Array.isArray(trend.runs) ? trend.runs : [];
+    const allSeries = Array.isArray(trend.series) ? trend.series : [];
+
+    // A KPI with no measured run anywhere in the window gets NO chip and NO empty chart —
+    // an empty axis is a lie of implied structure. It is named in words instead.
+    const chartable = allSeries.filter((s) => (s.points || []).some(isMeasured));
+    const neverMeasured = allSeries
+      .filter((s) => !(s.points || []).some(isMeasured))
+      .map((s) => text(s.display_name) || text(s.kpi_key))
+      .concat((trend.never_measured || []).map((s) => text(s.display_name) || text(s.kpi_key)));
+
+    if (!runs.length || !chartable.length) {
+      return (
+        <div className={cx('panel')}>
+          <div className={cx('panel-head')}>
+            <h3 className={cx('panel-title')}>KPI trend across runs</h3>
+          </div>
+          <p className={cx('empty-note')}>
+            No KPI on this test has been measured in more than one run yet. A trend needs at least
+            two runs — this window holds {runs.length}.
+          </p>
+        </div>
+      );
+    }
+
+    const keys = chartable.map((s) => text(s.kpi_key));
+    const active = chartable.find((s) => text(s.kpi_key) === text(selectedKey)) || chartable[0];
+    const activeIdx = keys.indexOf(text(active.kpi_key));
+
+    const { windowSize } = this.state;
+    const start = windowSize ? Math.max(0, runs.length - windowSize) : 0;
+    const shownRuns = runs.slice(start);
+    const shownPoints = (active.points || []).slice(start);
+
+    return (
+      <div className={cx('panel')}>
+        <div className={cx('panel-head')}>
+          <h3 className={cx('panel-title')} tabIndex={-1} ref={headingRef} id="sp-trend-title">
+            KPI trend across runs
+          </h3>
+          <span className={cx('panel-sub')}>
+            {text(trend.window && trend.window.basis) ||
+              'same test, most recent runs first-to-last — not a per-build comparison'}
+          </span>
+          <span className={cx('sp-trend-window')} role="radiogroup" aria-label="Trend window">
+            {TREND_WINDOWS.concat([0]).map((w) => {
+              const label = w ? `Last ${w}` : 'All';
+              const tooWide = Boolean(w) && w > runs.length;
+              const checked = (windowSize || 0) === w;
+              return (
+                <button
+                  type="button"
+                  key={label}
+                  role="radio"
+                  aria-checked={checked}
+                  disabled={tooWide}
+                  className={cx('sp-trend-window-opt', { on: checked })}
+                  onClick={() => this.setState({ windowSize: w || null })}
+                >
+                  {tooWide ? `${label} (only ${runs.length} runs of history exist)` : label}
+                </button>
+              );
+            })}
+          </span>
+        </div>
+
+        {/* Chip picker, not a <select>: run depth is the single most decision-relevant
+            fact here (whether a trend is readable at all), and a dropdown hides it for
+            every KPI but the selected one. */}
+        <div className={cx('section-chips')} role="tablist" aria-label="KPI to trend">
+          {chartable.map((s, i) => {
+            const measured = (s.points || []).filter(isMeasured).length;
+            const key = text(s.kpi_key);
+            const on = key === text(active.kpi_key);
+            return (
+              <button
+                type="button"
+                key={key}
+                role="tab"
+                id={`sp-trend-tab-${key.replace(/[^a-z0-9]+/gi, '-')}`}
+                aria-selected={on}
+                aria-controls="sp-trend-panel"
+                tabIndex={on ? 0 : -1}
+                className={cx('section-chip', 'sp-trend-chip', { on })}
+                onClick={() => onSelect(key)}
+                onKeyDown={(e) => this.onChipKeyDown(e, keys, i)}
+              >
+                {text(s.display_name) || key}
+                <b>
+                  {measured}/{(s.points || []).length} runs
+                </b>
+              </button>
+            );
+          })}
+        </div>
+
+        <div
+          id="sp-trend-panel"
+          role="tabpanel"
+          aria-labelledby={`sp-trend-tab-${text(active.kpi_key).replace(/[^a-z0-9]+/gi, '-')}`}
+        >
+          <KpiTrendChart
+            kpi={active}
+            runs={shownRuns}
+            points={shownPoints}
+            currentSessionId={currentSessionId}
+          />
+        </div>
+
+        {neverMeasured.length > 0 && (
+          <p className={cx('sp-trend-note')}>
+            Never measured on this test, so not offered above:{' '}
+            {neverMeasured.join(', ')}. There is no history to plot — nothing was captured, so
+            nothing is shown.
+          </p>
+        )}
+
+        {/* The older History accordion below reports the same KPIs with nulls DROPPED and
+            a hard 5-run cap, so its "previous" can silently be two runs ago when the run
+            in between measured nothing. Said out loud rather than left to look like a
+            contradiction. */}
+        {hasHistorySection && (
+          <p className={cx('sp-trend-note')}>
+            The “History” section further down compares only the last few runs and drops runs that
+            measured nothing, so its “previous run” may skip a gap shown here. This chart keeps every
+            run in the window, gaps included.
+          </p>
+        )}
+      </div>
+    );
+  }
+}
 
 // ── §4 Session Replay (hero) ─────────────────────────────────────────────────
 // The HTML5 <video> is the MASTER CLOCK. Its timeupdate drives one shared playhead
@@ -1551,6 +2269,20 @@ export class StreamPulseObservabilityTab extends Component {
   state = {
     data: null,
     loading: false,
+    trendKey: null,
+  };
+
+  trendHeadingRef = React.createRef();
+
+  // Selecting from a Top-KPI tile moves focus to the trend panel: the control must land
+  // the reader where the answer is, not scroll silently.
+  selectTrendKpi = (key) => {
+    this.setState({ trendKey: text(key) }, () => {
+      const el = this.trendHeadingRef.current;
+      if (el && el.focus) {
+        el.focus();
+      }
+    });
   };
 
   componentDidMount() {
@@ -1615,6 +2347,15 @@ export class StreamPulseObservabilityTab extends Component {
         !['rca', 'kpi_table', 'summary'].includes(s.type) && hasSectionContent(s),
     );
 
+    // Across-run trend. Suppressed ENTIRELY under SAMPLE data: a trend line drawn from
+    // mockObservabilityResponse.js is a fabricated regression narrative — worse than the
+    // static SAMPLE values the banner above already discloses, because a reader would
+    // take a direction from it. No live backend => no trend, and the tiles say nothing
+    // about run depth either (trendDepth stays null).
+    const trend =
+      !isSample && data.kpi_trend && (data.kpi_trend.series || []).length ? data.kpi_trend : null;
+    const trendDepth = trendDepthByKey(trend);
+
     const chips = [
       session.device && session.device !== 'unknown' ? text(session.device) : null,
       session.platform && session.platform !== 'unknown' ? text(session.platform) : null,
@@ -1641,19 +2382,40 @@ export class StreamPulseObservabilityTab extends Component {
                 {c}
               </span>
             ))}
-            {session.rca_category && session.rca_category !== 'UNKNOWN' && (
-              <Badge value={session.rca_category} />
-            )}
+            {/* 'NONE' is the API schema default and 'UNKNOWN' the ORM column default;
+                'UNCLASSIFIED' is the classifier's honest no-match output. All three
+                mean "never classified", so none of them is a category worth a chip —
+                the RCA panel below states the no-match case in words. Guarding the
+                whole sentinel set (not one hardcoded string) is what stops the next
+                sentinel leaking to screen the way 'NONE' did. */}
+            {!isRcaNoVerdict(session.rca_category) && <Badge value={session.rca_category} />}
           </div>
         </div>
 
         <VerdictCards session={session} topKpis={topKpis} verdict={data.verdict} />
-        <TopKpiGrid kpis={topKpis} />
+        <TopKpiGrid
+          kpis={topKpis}
+          basis={data.top_kpis_basis}
+          trendDepth={trendDepth}
+          onTrend={this.selectTrendKpi}
+        />
+
+        {trend && (
+          <KpiTrendPanel
+            trend={trend}
+            selectedKey={this.state.trendKey}
+            onSelect={this.selectTrendKpi}
+            headingRef={this.trendHeadingRef}
+            currentSessionId={session.id}
+            hasHistorySection={accordions.some((s) => s.type === 'history')}
+          />
+        )}
 
         {rcaSection && (
           <FoldableCard
             title="AI RCA & Insights"
-            badge={<Badge value={rcaSection.status} />}
+            sub="Deterministic rules and signatures decide category, owner and confidence — the LLM only proposes candidates for review"
+            badge={<RcaHeadChip section={rcaSection} />}
             defaultOpen={isWarningOrFail(rcaSection.status)}
           >
             <AiRcaInsights
@@ -1662,6 +2424,7 @@ export class StreamPulseObservabilityTab extends Component {
               functionalStatus={session.functional_status}
               actionsDisabled={isSample}
               actionsDisabledReason={actionsDisabledReason}
+              networkStatus={(data.network_intelligence || {}).status}
             />
           </FoldableCard>
         )}
