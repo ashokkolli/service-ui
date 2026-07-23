@@ -38,6 +38,29 @@ const fmtClock = (ms) => {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 };
 
+// Consecutive identical events collapse into ONE chip carrying a repeat count.
+//
+// A locator that polls until it times out emits the SAME event every few hundred ms:
+// one real run produced ~120 identical "find nav_home FAILED" chips inside a 150-chip
+// strip, which buried every other event and read as the same data pasted twice. The
+// count preserves the evidence that actually matters -- that it retried, and for how
+// long -- without repeating the row. Only ADJACENT identical events merge, so the same
+// event recurring later in the session stays its own chip rather than being folded into
+// an earlier, unrelated burst.
+const collapseRepeats = (events) => {
+  const out = [];
+  (events || []).forEach((e) => {
+    const prev = out[out.length - 1];
+    if (prev && prev.name === e.name && prev.status === e.status) {
+      prev.count += 1;
+      prev.lastOffsetMs = e.offset_ms;
+      return;
+    }
+    out.push({ ...e, count: 1, lastOffsetMs: e.offset_ms });
+  });
+  return out;
+};
+
 // Step-hold sample of a [{t,v}] series (t in ms) at time `tMs`: the value in effect is
 // the last REAL sample at or before it — never interpolated into a value the capture
 // did not record. Returns null when nothing is sampleable so the caller shows "—".
@@ -1026,14 +1049,11 @@ const RcaMetaStrip = ({ verdict }) => {
     matched
       ? { key: 'conf', label: 'Confidence', value: percent(verdict.confidence) }
       : { key: 'conf', label: 'Confidence', value: absent.confidence, absent: true },
-    matched && verdict.ownerRouted
-      ? { key: 'owner', label: 'Owner', value: verdict.owner }
-      : {
-          key: 'owner',
-          label: 'Owner',
-          value: matched ? 'Not routed — the matched rule assigns no owner' : absent.owner,
-          absent: true,
-        },
+    // Owner is deliberately NOT shown here. The rules engine routes a team name
+    // ("Mobile App") from the breached KPI's category alone -- it is a routing hint,
+    // not a finding, and printed next to a real confidence figure and evidence hash it
+    // reads as an accountable assignment the evidence does not support. The routing
+    // still travels in the payload (verdict.owner) for whoever consumes it downstream.
     matched
       ? { key: 'by', label: 'Classified by', value: verdict.classifier }
       : { key: 'by', label: 'Classified by', value: classifier, absent: true },
@@ -1157,7 +1177,12 @@ RcaBudgetTable.propTypes = { kpis: PropTypes.array.isRequired };
 const RCA_EVIDENCE_VISIBLE = 6;
 
 const RcaEvidenceRows = ({ groups }) => (
-  <table className={cx('rca-table')}>
+  // `rca-table-endpoints` opts THIS table into fixed column widths so the visible
+  // half and the folded half line up. It must not be on `.rca-table` itself --
+  // that class is shared with the What-Breached table, whose wider DELTA text
+  // ("8.82 s over budget") overflows a pinned numeric column and collides with
+  // the next cell.
+  <table className={cx('rca-table', 'rca-table-endpoints')}>
     <thead>
       <tr>
         <th scope="col">Endpoint</th>
@@ -2081,14 +2106,22 @@ class SessionReplay extends Component {
             </div>
             {timeline.length > 0 && (
               <div className={cx('replay-events')}>
-                {timeline.map((e, i) => (
+                {collapseRepeats(timeline).map((e, i) => (
                   <button
                     type="button"
                     className={cx('replay-evchip', statusClass(e.status))}
                     key={`ev-${e.offset_ms}-${i}`}
                     onClick={() => this.seekTo(e.offset_ms)}
+                    title={
+                      e.count > 1
+                        ? `${e.count}x ${text(e.name)} — ${fmtClock(e.offset_ms)} to ${fmtClock(
+                            e.lastOffsetMs,
+                          )}`
+                        : undefined
+                    }
                   >
                     {fmtClock(e.offset_ms)} {text(e.name)}
+                    {e.count > 1 ? ` x${e.count}` : ''}
                   </button>
                 ))}
               </div>
@@ -2413,8 +2446,13 @@ export class StreamPulseObservabilityTab extends Component {
 
         {rcaSection && (
           <FoldableCard
-            title="AI RCA & Insights"
-            sub="Deterministic rules and signatures decide category, owner and confidence — the LLM only proposes candidates for review"
+            // "Automated", not "AI": the category, owner and confidence come from a
+            // deterministic rule table over measured KPIs (rca_rules.py), and the
+            // confidence is a constant on the matched rule, not a model probability.
+            // The sub-line always said so; the title claimed otherwise, and the title
+            // is what gets read and repeated.
+            title="Automated RCA & Insights"
+            sub="Deterministic rules over measured KPIs decide category, owner and confidence — any LLM narration is labelled and never changes the verdict"
             badge={<RcaHeadChip section={rcaSection} />}
             defaultOpen={isWarningOrFail(rcaSection.status)}
           >

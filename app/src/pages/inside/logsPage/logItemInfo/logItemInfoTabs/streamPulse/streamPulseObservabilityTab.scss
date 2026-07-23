@@ -7,76 +7,88 @@
  */
 
 .stream-pulse-tab {
-  /* ---- light (default) ---- */
-  --sp-bg: #eef1f5;
+  /* ---- light (default) — Atlassian/Jira-calm neutrals ----
+   *
+   * A triage surface is read under pressure, so the palette is deliberately LOW
+   * CHROMA: near-neutral greys carry the structure and colour is spent only where
+   * it means something (ok / warn / crit / accent). The previous palette pushed
+   * saturated blue into borders and headers, which competed with the status colours
+   * for attention and made a clean run look as busy as a failing one.
+   *
+   * Text tones are Atlassian's: #172b4d primary, #44546f subtle, #626f86 faint --
+   * all AA-contrast on white, so "quiet" never becomes "unreadable". */
+  --sp-bg: #f7f8f9;
   --sp-surface: #ffffff;
-  --sp-surface-2: #f6f8fa;
-  --sp-ink: #23303a;
-  --sp-muted: #6b7783;
-  --sp-faint: #9aa5b1;
-  --sp-line: #dfe4ea;
-  --sp-line-2: #eef1f4;
-  --sp-accent: #0f8bc4;
-  --sp-accent-soft: #e1f0f8;
-  --sp-ok: #157347;
-  --sp-ok-bg: #e5f1e6;
-  --sp-warn: #805500;
-  --sp-warn-bg: #f8ecd8;
-  --sp-crit: #a61b1b;
-  --sp-crit-bg: #f9e1df;
-  --sp-net: #0f8bc4;
-  --sp-net-bg: #e1f0f8;
-  --sp-mono: 'Roboto Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
+  --sp-surface-2: #f1f2f4;
+  --sp-ink: #172b4d;
+  --sp-muted: #44546f;
+  --sp-faint: #626f86;
+  --sp-line: #dfe1e6;
+  --sp-line-2: #ebecf0;
+  --sp-accent: #0c66e4;
+  --sp-accent-soft: #e9f2ff;
+  --sp-ok: #216e4e;
+  --sp-ok-bg: #dcfff1;
+  --sp-warn: #974f0c;
+  --sp-warn-bg: #fff7d6;
+  --sp-crit: #ae2e24;
+  --sp-crit-bg: #ffedeb;
+  --sp-net: #0c66e4;
+  --sp-net-bg: #e9f2ff;
+  --sp-mono: ui-monospace, 'SF Mono', 'Roboto Mono', 'Menlo', monospace;
+  /* System UI stack, as Atlassian ships: matches the host OS rather than importing
+   * a webfont, so nothing blocks first paint and no glyphs reflow late. */
+  --sp-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  /* Sparkline ink: a soft orange that reads as a TRACE, not as a status. Held
+   * clear of both --sp-crit (#ae2e24) and --sp-warn (#974f0c) on purpose -- a
+   * chart line drawn in a status colour makes every plane look like an alarm. */
+  --sp-spark: #e8934a;
+  /* Jira's understated corner. 8px reads consumer-app; 3px reads tool. */
+  --sp-radius: 3px;
+  /* Cards keep a slightly softer corner than controls, as Jira's do -- enough to
+   * read as a surface, not enough to read as a consumer card. */
+  --sp-radius-lg: 6px;
 
   padding: 20px;
   background: var(--sp-bg);
   color: var(--sp-ink);
-  font-size: 13px;
-  line-height: 1.45;
+  font-family: var(--sp-font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* RP dark theme — honour both the OS preference and an explicit [data-theme] toggle. */
-@media (prefers-color-scheme: dark) {
-  .stream-pulse-tab {
-    --sp-bg: #1a2129;
-    --sp-surface: #222b34;
-    --sp-surface-2: #2a343e;
-    --sp-ink: #e6ebef;
-    --sp-muted: #97a2ac;
-    --sp-faint: #6a747d;
-    --sp-line: #333e48;
-    --sp-line-2: #2b343d;
-    --sp-accent: #3aa9dd;
-    --sp-accent-soft: #123240;
-    --sp-ok: #7cc98a;
-    --sp-ok-bg: #1a2c1e;
-    --sp-warn: #e0982f;
-    --sp-warn-bg: #2c2413;
-    --sp-crit: #e56a63;
-    --sp-crit-bg: #2e1a19;
-    --sp-net: #3aa9dd;
-    --sp-net-bg: #122c39;
-  }
-}
+/* RP dark theme — driven by RP's OWN theme only, never by the OS preference.
+ *
+ * This tab is embedded INSIDE ReportPortal's chrome, and RP does not follow the
+ * OS: its shell stays light on a machine set to Dark Appearance. Honouring
+ * prefers-color-scheme here therefore produced a dark panel sitting in a light
+ * page -- read (reasonably) as "the tab failed to load" rather than as a theme.
+ * The container's theme is the only correct signal for a component that lives in
+ * someone else's container, so dark is now driven exclusively by [data-theme].
+ */
 :global([data-theme='dark']) .stream-pulse-tab {
-  --sp-bg: #1a2129;
-  --sp-surface: #222b34;
-  --sp-surface-2: #2a343e;
-  --sp-ink: #e6ebef;
-  --sp-muted: #97a2ac;
-  --sp-faint: #6a747d;
-  --sp-line: #333e48;
-  --sp-line-2: #2b343d;
-  --sp-accent: #3aa9dd;
-  --sp-accent-soft: #123240;
-  --sp-ok: #7cc98a;
-  --sp-ok-bg: #1a2c1e;
-  --sp-warn: #e0982f;
-  --sp-warn-bg: #2c2413;
-  --sp-crit: #e56a63;
-  --sp-crit-bg: #2e1a19;
-  --sp-net: #3aa9dd;
-  --sp-net-bg: #122c39;
+  /* Atlassian dark neutrals — same low-chroma discipline as the light set. */
+  --sp-bg: #1d2125;
+  --sp-surface: #22272b;
+  --sp-surface-2: #282e33;
+  --sp-ink: #c7d1db;
+  --sp-muted: #9fadbc;
+  --sp-faint: #738496;
+  --sp-line: #38414a;
+  --sp-line-2: #2c333a;
+  --sp-accent: #579dff;
+  --sp-accent-soft: #1c2b41;
+  --sp-ok: #7ee2b8;
+  --sp-ok-bg: #1c3329;
+  --sp-warn: #f5cd47;
+  --sp-warn-bg: #332e1b;
+  --sp-crit: #fd9891;
+  --sp-crit-bg: #42221f;
+  --sp-net: #579dff;
+  --sp-net-bg: #1c2b41;
+  --sp-spark: #f4b072;
 }
 
 /* ── header ─────────────────────────────────────────────────────────────── */
@@ -112,7 +124,7 @@
   margin-bottom: 14px;
   padding: 10px 12px;
   border: 1px solid rgba($COLOR--warning, 0.5);
-  border-radius: 8px;
+  border-radius: var(--sp-radius);
   background: var(--sp-warn-bg);
   color: var(--sp-warn);
   font-size: 12.5px;
@@ -121,7 +133,7 @@
   margin-top: 12px;
   padding: 16px;
   border: 1px solid var(--sp-line);
-  border-radius: 8px;
+  border-radius: var(--sp-radius);
   background: var(--sp-surface);
   color: var(--sp-muted);
   font-size: 13px;
@@ -133,7 +145,7 @@
   align-items: center;
   min-height: 20px;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--sp-radius);
   background: var(--sp-line-2);
   color: var(--sp-muted);
   font-size: 11px;
@@ -174,7 +186,7 @@
   padding: 16px 16px 16px 18px;
   background: var(--sp-surface);
   border: 1px solid var(--sp-line);
-  border-radius: 12px;
+  border-radius: var(--sp-radius-lg);
   overflow: hidden;
   &::before {
     content: '';
@@ -229,7 +241,7 @@
 .card {
   background: var(--sp-surface);
   border: 1px solid var(--sp-line);
-  border-radius: 12px;
+  border-radius: var(--sp-radius-lg);
   margin-bottom: 14px;
 }
 .panel {
@@ -317,7 +329,7 @@ details[open] > .card-head .chev {
   flex-direction: column;
   padding: 11px 12px;
   border: 1px solid var(--sp-line);
-  border-radius: 10px;
+  border-radius: var(--sp-radius);
   background: var(--sp-surface-2);
 
   /* Left status stripe. `passed` (green) is reachable ONLY from an explicit pass —
@@ -544,7 +556,7 @@ details[open] > .card-head .chev {
   width: 100%;
   aspect-ratio: 9 / 16;
   max-height: 440px;
-  border-radius: 12px;
+  border-radius: var(--sp-radius-lg);
   overflow: hidden;
   background: #0c1f17;
   border: 1px solid var(--sp-line);
@@ -727,7 +739,7 @@ details[open] > .card-head .chev {
 }
 .plane {
   border: 1px solid var(--sp-line);
-  border-radius: 10px;
+  border-radius: var(--sp-radius);
   overflow: hidden;
   background: var(--sp-surface);
 }
@@ -864,33 +876,62 @@ details[open] > .card-head .chev {
 }
 
 /* sparkline SVG */
-.sp-spark {
+/* :global IS LOAD-BEARING HERE -- do not "tidy" it away.
+ *
+ * sparkline.jsx emits PLAIN class strings (className="sp-spark-area"); it imports
+ * neither this stylesheet nor `cx`. Locally-scoped rules get hashed by css-modules
+ * into `sp-spark-area--UGqoL`, which matches nothing the component renders, so
+ * every rule below silently did nothing -- and an SVG <path> with no fill rule
+ * paints with the initial value, BLACK. That is what turned these sparklines into
+ * solid slabs, and why recolouring them repeatedly changed nothing.
+ *
+ * The --sp-* custom properties still resolve: they are declared on the
+ * module-scoped .stream-pulse-tab, and these nodes are its descendants, so the
+ * values inherit down normally. */
+:global(.sp-spark) {
   display: block;
   overflow: visible;
 }
-.sp-spark-area {
-  fill: color-mix(in srgb, var(--sp-accent) 10%, transparent);
+/* SVG FILLS MUST HAVE A LITERAL FALLBACK.
+ *
+ * `color-mix()` is unsupported on older engines, and an unsupported declaration is
+ * DROPPED -- which for an SVG <path> means the fill reverts to the initial value,
+ * black. That is why these sparklines rendered as solid black slabs instead of
+ * lines: not a styling choice, a silently discarded declaration. Every rule below
+ * therefore states a plain rgba() first and only then the color-mix refinement, so
+ * a browser that cannot parse the second keeps a correct first.
+ *
+ * (Harmless elsewhere in this sheet: a dropped `background`/`border-color` falls
+ * back to transparent/none. It is specifically SVG paint that fails to black.) */
+:global(.sp-spark-area) {
+  fill: rgba(232, 147, 74, 0.12);
+  fill: color-mix(in srgb, var(--sp-spark) 12%, transparent);
   stroke: none;
 }
-.sp-spark-line {
+:global(.sp-spark-line) {
   fill: none;
-  stroke: var(--sp-accent);
+  stroke: rgba(232, 147, 74, 0.95);
+  stroke: var(--sp-spark);
   stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
-.sp-spark-band {
+:global(.sp-spark-band) {
+  fill: rgba(174, 46, 36, 0.14);
   fill: color-mix(in srgb, var(--sp-crit) 14%, transparent);
 }
-.sp-spark-scrub {
+:global(.sp-spark-scrub) {
   stroke: var(--sp-accent);
   stroke-width: 1;
   opacity: 0.85;
   vector-effect: non-scaling-stroke;
 }
-.sp-spark-dot {
-  fill: var(--sp-accent);
+:global(.sp-spark-dot) {
+  fill: rgba(232, 147, 74, 0.95);
+  fill: var(--sp-spark);
 }
-.sp-spark-empty {
+:global(.sp-spark-empty) {
   color: var(--sp-faint);
 }
 
@@ -1103,7 +1144,7 @@ details[open] > .card-head .chev {
 .section-chip {
   padding: 5px 11px;
   border: 1px solid var(--sp-line);
-  border-radius: 8px;
+  border-radius: var(--sp-radius);
   background: var(--sp-surface-2);
   font-size: 12px;
   font-family: $FONT-SEMIBOLD;
@@ -1327,7 +1368,7 @@ $kpi-rail: 96px;
 }
 .accordion {
   border: 1px solid var(--sp-line);
-  border-radius: 12px;
+  border-radius: var(--sp-radius-lg);
   background: var(--sp-surface);
   overflow: hidden;
 }
@@ -1367,17 +1408,28 @@ $kpi-rail: 96px;
 }
 .ordered-list {
   margin: 0;
-  padding-left: 18px;
+  /* RP's global reset strips list-style, so the checklist rendered as unmarked
+   * indented lines -- ordered steps that did not look ordered. Re-assert it here
+   * rather than relying on the UA default the reset already removed. */
+  padding-left: 22px;
+  list-style: decimal outside;
 }
 .ordered-list li {
-  margin: 4px 0;
+  margin: 5px 0;
+  padding-left: 2px;
+  color: var(--sp-ink);
+  line-height: 1.55;
+}
+.ordered-list li::marker {
+  color: var(--sp-faint);
+  font-size: 11px;
 }
 .pre {
   margin: 0;
   padding: 10px;
   overflow: auto;
   border: 1px solid var(--sp-line);
-  border-radius: 8px;
+  border-radius: var(--sp-radius);
   background: var(--sp-surface-2);
   font-size: 12px;
   font-family: var(--sp-mono);
@@ -1427,7 +1479,7 @@ $kpi-rail: 96px;
   position: relative;
   padding: 12px 14px 12px 16px;
   border: 1px solid var(--sp-line);
-  border-radius: 10px;
+  border-radius: var(--sp-radius);
   background: var(--sp-surface-2);
 }
 .rca-verdict-cell::before {
@@ -1567,6 +1619,24 @@ $kpi-rail: 96px;
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+}
+/* ENDPOINT EVIDENCE ONLY -- never `.rca-table` as a whole.
+ *
+ * The endpoint evidence renders as TWO tables (the first N, then the folded
+ * remainder), and with auto layout each sized its columns to its own content, so
+ * the two halves of one logical table disagreed on every boundary once the fold
+ * opened. Fixed widths fix that -- but `.rca-table` is also the What-Breached
+ * table, whose DELTA cells carry prose ("8.82 s over budget") that overflows a
+ * pinned numeric column and lands on top of STATE. Scope, don't generalise. */
+.rca-table-endpoints {
+  table-layout: fixed;
+}
+.rca-table-endpoints th:not(.rca-num),
+.rca-table-endpoints td:not(.rca-num) {
+  width: auto;
+}
+.rca-table-endpoints .rca-num {
+  width: 96px;
 }
 .rca-table th,
 .rca-table td {
@@ -1748,21 +1818,30 @@ $kpi-rail: 96px;
 }
 
 /* ── jira-ready draft ───────────────────────────────────────────────────── */
+/* A drafted ticket is PROSE someone will read and paste -- not a payload. The hard
+ * border + filled panel gave it the shape of a code block, so a paragraph of plain
+ * English read as machine output and got skipped. Quoted-passage treatment instead:
+ * an accent rule marks it as draft text, and a bounded measure keeps a 60-word
+ * summary readable rather than stretching it across the full panel width. */
 .jira-draft {
   margin: 0 0 8px;
-  padding: 10px;
-  border: 1px solid var(--sp-line);
-  border-radius: 8px;
-  background: var(--sp-surface-2);
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--sp-accent);
   font-size: 12px;
 }
 .jira-draft dt {
+  margin-bottom: 3px;
   color: var(--sp-muted);
   font-family: $FONT-SEMIBOLD;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 .jira-draft dd {
-  margin: 2px 0 8px;
-  line-height: 1.5;
+  max-width: 78ch;
+  margin: 2px 0 10px;
+  color: var(--sp-ink);
+  line-height: 1.6;
 }
 .jira-draft dd:last-child {
   margin-bottom: 0;
@@ -1784,7 +1863,7 @@ $kpi-rail: 96px;
   gap: 6px;
   padding: 7px 13px;
   border: 1px solid var(--sp-line);
-  border-radius: 8px;
+  border-radius: var(--sp-radius);
   background: var(--sp-surface);
   color: var(--sp-ink);
   font-family: $FONT-SEMIBOLD;
